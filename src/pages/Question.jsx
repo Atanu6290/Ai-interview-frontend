@@ -23,13 +23,16 @@ import generateQuestions from '../Api/generateQuestions';
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#3f51b5',
+      main: '#4a7c59',
     },
     secondary: {
-      main: '#f50057',
+      main: '#2d5a3d',
     },
     success: {
-      main: '#4caf50',
+      main: '#4a7c59',
+    },
+    error: {
+      main: '#d32f2f',
     },
   },
   typography: {
@@ -48,7 +51,7 @@ const styles = {
     inset: 0,
     height: '100vh',
     width: '100%',
-    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+    background: '#ECF4E8',
     padding: 0,
     display: 'flex',
     flexDirection: 'row',
@@ -61,18 +64,18 @@ const styles = {
   },
   aiSection: {
     flex: 1,
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: '#CBF3BB',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
     padding: '40px',
-    borderRight: '4px solid rgba(255, 255, 255, 0.1)',
+    borderRight: '1px solid rgba(0, 0, 0, 0.08)',
   },
   userSection: {
     flex: 1,
-    background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+    background: '#ECF4E8',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -85,11 +88,12 @@ const styles = {
     maxWidth: '500px',
     aspectRatio: '16/9',
     backgroundColor: '#000',
-    borderRadius: '16px',
+    borderRadius: '8px',
     overflow: 'hidden',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
     position: 'relative',
     marginTop: '20px',
+    border: '1px solid rgba(0,0,0,0.08)',
   },
   video: {
     width: '100%',
@@ -97,16 +101,17 @@ const styles = {
     objectFit: 'cover',
   },
   transcriptBox: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: '16px',
-    padding: '24px',
+    backgroundColor: '#ffffff',
+    borderRadius: '8px',
+    padding: '20px',
     marginTop: '20px',
     minHeight: '150px',
     maxHeight: '200px',
     width: '100%',
     maxWidth: '500px',
     overflowY: 'auto',
-    boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+    border: '1px solid rgba(0,0,0,0.06)',
   },
   waveformContainer: {
     position: 'absolute',
@@ -119,14 +124,13 @@ const styles = {
     height: '60px',
   },
   waveBar: {
-    width: '4px',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    width: '3px',
+    backgroundColor: 'rgba(74, 124, 89, 0.6)',
     borderRadius: '2px',
-    transition: 'height 0.1s ease',
+    transition: 'height 0.15s ease',
   },
   pulsingGlow: {
-    animation: 'pulse 2s ease-in-out infinite',
-    boxShadow: '0 0 30px rgba(255, 255, 255, 0.6)',
+    opacity: 0.98,
   },
   statusChip: {
     position: 'absolute',
@@ -142,7 +146,7 @@ const styles = {
     justifyContent: 'center',
     minHeight: '100vh',
     gap: 2,
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    background: '#ECF4E8',
   },
 };
 
@@ -643,11 +647,11 @@ export default function QuestionsPage() {
     return (
       <ThemeProvider theme={theme}>
         <Box sx={styles.loadingContainer}>
-          <CircularProgress size={60} sx={{ color: '#fff' }} />
-          <Typography variant="h6" sx={{ color: '#fff', mt: 2 }}>
+          <CircularProgress size={60} sx={{ color: '#4a7c59' }} />
+          <Typography variant="h6" sx={{ color: '#2d5a3d', mt: 2, fontWeight: 600 }}>
             Loading Interview...
           </Typography>
-          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+          <Typography variant="body2" sx={{ color: '#4a7c59' }}>
             Please wait while we prepare your session
           </Typography>
         </Box>
@@ -663,7 +667,7 @@ export default function QuestionsPage() {
           <Alert severity="error" sx={{ mb: 3, width: '100%', maxWidth: 600 }}>
             {error || 'No questions available'}
           </Alert>
-          <Typography variant="h6" sx={{ color: '#fff', mb: 2 }}>
+          <Typography variant="h6" sx={{ color: '#2d5a3d', mb: 2, fontWeight: 600 }}>
             Unable to Load Questions
           </Typography>
           <Button
@@ -671,6 +675,12 @@ export default function QuestionsPage() {
             startIcon={<Refresh />}
             onClick={retryFetchQuestions}
             size="large"
+            sx={{
+              backgroundColor: '#4a7c59',
+              '&:hover': {
+                backgroundColor: '#2d5a3d',
+              },
+            }}
           >
             Retry
           </Button>
@@ -684,11 +694,11 @@ export default function QuestionsPage() {
     return (
       <ThemeProvider theme={theme}>
         <Box sx={styles.loadingContainer}>
-          <CheckCircle sx={{ fontSize: 80, mb: 3, color: '#4caf50' }} />
-          <Typography variant="h4" sx={{ color: '#fff', mb: 2 }}>
+          <CheckCircle sx={{ fontSize: 80, mb: 3, color: '#4a7c59' }} />
+          <Typography variant="h4" sx={{ color: '#2d5a3d', mb: 2, fontWeight: 600 }}>
             Interview Complete!
           </Typography>
-          <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.9)', mb: 3 }}>
+          <Typography variant="body1" sx={{ color: '#4a7c59', mb: 3 }}>
             Thank you for completing the AI screening round.
           </Typography>
           <Alert severity="success" sx={{ maxWidth: 600 }}>
@@ -724,18 +734,21 @@ export default function QuestionsPage() {
           <Box sx={{ ...styles.aiSection, ...(isSpeaking && styles.pulsingGlow) }}>
             <Chip
               label="● AI INTERVIEWER"
-              color="primary"
-              sx={styles.statusChip}
+              sx={{
+                ...styles.statusChip,
+                backgroundColor: '#4a7c59',
+                color: '#ffffff',
+                fontWeight: 'bold',
+              }}
             />
 
             <Typography
               variant="h3"
               sx={{
-                color: '#fff',
-                fontWeight: 'bold',
+                color: '#2d5a3d',
+                fontWeight: 600,
                 textAlign: 'center',
                 mb: 2,
-                textShadow: '0 2px 10px rgba(0,0,0,0.3)',
               }}
             >
               AI Interviewer
@@ -744,9 +757,10 @@ export default function QuestionsPage() {
             <Typography
               variant="h6"
               sx={{
-                color: 'rgba(255,255,255,0.9)',
+                color: '#4a7c59',
                 textAlign: 'center',
                 mb: 3,
+                fontWeight: 400,
               }}
             >
               Question {currentQuestionIndex + 1} of {questions.length}
@@ -755,21 +769,22 @@ export default function QuestionsPage() {
             {/* AI Avatar/Icon */}
             <Box
               sx={{
-                width: '120px',
-                height: '120px',
+                width: '100px',
+                height: '100px',
                 borderRadius: '50%',
-                background: 'rgba(255,255,255,0.2)',
+                background: '#ffffff',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 mb: 3,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                border: '2px solid #4a7c59',
                 ...(isSpeaking && {
-                  animation: 'pulse 1.5s ease-in-out infinite',
-                  boxShadow: '0 0 40px rgba(255,255,255,0.8)',
+                  boxShadow: '0 2px 12px rgba(74, 124, 89, 0.4)',
                 }),
               }}
             >
-              <Mic sx={{ fontSize: 60, color: '#fff' }} />
+              <Mic sx={{ fontSize: 50, color: '#4a7c59' }} />
             </Box>
 
             {/* Question Display */}
@@ -777,12 +792,17 @@ export default function QuestionsPage() {
               {questions[currentQuestionIndex]?.category && (
                 <Chip
                   label={questions[currentQuestionIndex].category}
-                  color="secondary"
+                  sx={{
+                    mb: 2,
+                    backgroundColor: '#CBF3BB',
+                    color: '#2d5a3d',
+                    fontWeight: 600,
+                    border: '1px solid #4a7c59',
+                  }}
                   size="small"
-                  sx={{ mb: 2 }}
                 />
               )}
-              <Typography variant="h6" sx={{ color: '#333', lineHeight: 1.6 }}>
+              <Typography variant="h6" sx={{ color: '#2d5a3d', lineHeight: 1.6 }}>
                 {questions[currentQuestionIndex]?.text}
               </Typography>
             </Box>
@@ -807,18 +827,21 @@ export default function QuestionsPage() {
           <Box sx={{ ...styles.userSection, ...(isListening && styles.pulsingGlow) }}>
             <Chip
               label={isListening ? '● LISTENING' : '● STANDBY'}
-              color={isListening ? 'error' : 'default'}
-              sx={styles.statusChip}
+              sx={{
+                ...styles.statusChip,
+                backgroundColor: isListening ? '#d32f2f' : '#4a7c59',
+                color: '#ffffff',
+                fontWeight: 'bold',
+              }}
             />
 
             <Typography
               variant="h3"
               sx={{
-                color: '#fff',
-                fontWeight: 'bold',
+                color: '#2d5a3d',
+                fontWeight: 600,
                 textAlign: 'center',
                 mb: 2,
-                textShadow: '0 2px 10px rgba(0,0,0,0.3)',
               }}
             >
               Your Response
@@ -849,18 +872,18 @@ export default function QuestionsPage() {
 
             {/* Transcript Display */}
             <Box sx={styles.transcriptBox}>
-              <Typography variant="subtitle2" sx={{ color: '#666', mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ color: '#4a7c59', mb: 1, fontWeight: 600 }}>
                 Your Answer:
               </Typography>
-              <Typography variant="body1" sx={{ color: '#333', lineHeight: 1.8 }}>
+              <Typography variant="body1" sx={{ color: '#2d5a3d', lineHeight: 1.8 }}>
                 {finalTranscript}
                 {interimTranscript && (
-                  <span style={{ color: '#999', fontStyle: 'italic' }}>
+                  <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
                     {interimTranscript}
                   </span>
                 )}
                 {!finalTranscript && !interimTranscript && (
-                  <span style={{ color: '#999', fontStyle: 'italic' }}>
+                  <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
                     Start speaking your answer...
                   </span>
                 )}
@@ -876,7 +899,7 @@ export default function QuestionsPage() {
                     sx={{
                       ...styles.waveBar,
                       height: `${height}px`,
-                      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                      backgroundColor: 'rgba(74, 124, 89, 0.6)',
                     }}
                   />
                 ))}
@@ -889,11 +912,11 @@ export default function QuestionsPage() {
                 variant="determinate"
                 value={((currentQuestionIndex + 1) / questions.length) * 100}
                 sx={{
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: 'rgba(255,255,255,0.3)',
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: 'rgba(0,0,0,0.08)',
                   '& .MuiLinearProgress-bar': {
-                    backgroundColor: '#fff',
+                    backgroundColor: '#4a7c59',
                   },
                 }}
               />
@@ -901,19 +924,7 @@ export default function QuestionsPage() {
           </Box>
         </Box>
 
-        <style jsx>{`
-          @keyframes pulse {
-            0%,
-            100% {
-              opacity: 1;
-              transform: scale(1);
-            }
-            50% {
-              opacity: 0.8;
-              transform: scale(1.05);
-            }
-          }
-        `}</style>
+
       </Box>
     </ThemeProvider>
   );
