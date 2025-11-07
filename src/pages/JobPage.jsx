@@ -175,7 +175,7 @@ export default function JobPage() {
       <Box sx={styles.container}>
         <Paper elevation={3} sx={styles.mainCard}>
           <Typography variant="h4" component="h1" gutterBottom color="primary">
-            AI Interview System
+            AI screening round
           </Typography>
           <Typography variant="body1" color="textSecondary" sx={{ mb: 4 }}>
             Upload a job description or paste it below

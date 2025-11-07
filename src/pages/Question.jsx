@@ -279,11 +279,11 @@ export default function QuestionsPage() {
           answer: finalTranscript,
         };
 
-        try {
-          await uploadVideo(videoBlob, questionData);
-        } catch (uploadErr) {
-          console.error('Upload failed:', uploadErr);
-        }
+        // try {
+        //   await uploadVideo(videoBlob, questionData);
+        // } catch (uploadErr) {
+        //   console.error('Upload failed:', uploadErr);
+        // }
 
         // Restart recording for next question if not complete
         if (!isComplete && videoStream) {
@@ -390,14 +390,13 @@ export default function QuestionsPage() {
   }, [id]);
 
   // Auto-start question reading when questions are loaded
-  useEffect(() => {
-    if (questions.length > 0 && !isLoading && isCameraActive) {
-      // Small delay to ensure everything is ready
-      setTimeout(() => {
-        speakQuestion();
-      }, 1000);
-    }
-  }, [questions, isLoading, isCameraActive]);
+ useEffect(() => {
+  if (questions.length > 0 && !isLoading && isCameraActive) {
+    setTimeout(() => {
+      speakQuestion(questions[0].text); // Pass the first question text
+    }, 1000);
+  }
+}, [questions, isLoading, isCameraActive]);
 
   // Check browser support
   useEffect(() => {
@@ -480,45 +479,44 @@ export default function QuestionsPage() {
   };
 
   // Speak question using TTS
-  const speakQuestion = () => {
-    if (!questions[currentQuestionIndex]) return;
+  const speakQuestion = (questionText) => {
+  if (!questionText) return;
 
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); // Cancel any ongoing speech
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
 
-      const speech = new SpeechSynthesisUtterance(questions[currentQuestionIndex].text);
-      speech.rate = 0.9;
-      speech.pitch = 1.0;
-      speech.volume = 1.0;
+    const speech = new SpeechSynthesisUtterance(questionText);
+    speech.rate = 0.9;
+    speech.pitch = 1.0;
+    speech.volume = 1.0;
 
-      speech.onstart = () => {
-        setIsSpeaking(true);
-        console.log('AI started speaking');
-      };
+    speech.onstart = () => {
+      setIsSpeaking(true);
+      console.log('AI started speaking');
+    };
 
-      speech.onend = () => {
-        setIsSpeaking(false);
-        console.log('AI finished speaking');
-        
-        // Start listening after AI finishes speaking
-        setTimeout(() => {
-          startListening();
-        }, 500);
-      };
-
-      speech.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
-        setIsSpeaking(false);
-        // Start listening anyway
+    speech.onend = () => {
+      setIsSpeaking(false);
+      console.log('AI finished speaking');
+      
+      setTimeout(() => {
         startListening();
-      };
+      }, 500);
+    };
 
-      window.speechSynthesis.speak(speech);
-    } else {
-      showAlertMessage('Text-to-speech not supported', 'warning');
+    speech.onerror = (event) => {
+      console.error('Speech synthesis error:', event);
+      setIsSpeaking(false);
       startListening();
-    }
-  };
+    };
+
+    window.speechSynthesis.speak(speech);
+  } else {
+    showAlertMessage('Text-to-speech not supported', 'warning');
+    startListening();
+  }
+};
+
 
   // Start listening for user answer (using react-speech-recognition)
   const startListening = () => {
@@ -605,7 +603,7 @@ export default function QuestionsPage() {
         
         // Speak next question after a brief pause
         setTimeout(() => {
-          speakQuestion();
+          speakQuestion(transformedQuestion.text);
         }, 1500);
       } else {
         // No more questions - interview complete
@@ -623,30 +621,30 @@ export default function QuestionsPage() {
   };
 
   // Upload video
-  const uploadVideo = async (videoBlob, questionData) => {
-    try {
-      const formData = new FormData();
-      const timestamp = new Date().getTime();
-      formData.append('video', videoBlob, `interview-q${questionData.questionId}-${timestamp}.webm`);
-      formData.append('questionId', questionData.questionId);
-      formData.append('questionText', questionData.question);
-      formData.append('category', questionData.category);
-      formData.append('sessionId', sessionId || id);
-      formData.append('uuid', id);
-      formData.append('timestamp', questionData.timestamp);
-      formData.append('answer', questionData.answer);
+  // const uploadVideo = async (videoBlob, questionData) => {
+  //   try {
+  //     const formData = new FormData();
+  //     const timestamp = new Date().getTime();
+  //     formData.append('video', videoBlob, `interview-q${questionData.questionId}-${timestamp}.webm`);
+  //     formData.append('questionId', questionData.questionId);
+  //     formData.append('questionText', questionData.question);
+  //     formData.append('category', questionData.category);
+  //     formData.append('sessionId', sessionId || id);
+  //     formData.append('uuid', id);
+  //     formData.append('timestamp', questionData.timestamp);
+  //     formData.append('answer', questionData.answer);
 
-      const response = await axios.post('/api/upload-interview-video', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+  //     const response = await axios.post('/api/upload-interview-video', formData, {
+  //       headers: { 'Content-Type': 'multipart/form-data' },
+  //     });
 
-      console.log('Video uploaded successfully:', response.data);
-      return response.data;
-    } catch (err) {
-      console.error('Video upload error:', err);
-      throw err;
-    }
-  };
+  //     console.log('Video uploaded successfully:', response.data);
+  //     return response.data;
+  //   } catch (err) {
+  //     console.error('Video upload error:', err);
+  //     throw err;
+  //   }
+  // };
 
   // Get supported MIME type
   const getSupportedMimeType = () => {
