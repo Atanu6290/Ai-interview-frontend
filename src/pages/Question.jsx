@@ -176,6 +176,7 @@ export default function QuestionsPage() {
   const [aiWaveform, setAiWaveform] = useState([]);
   const [userWaveform, setUserWaveform] = useState([]);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [silenceCountdown, setSilenceCountdown] = useState(null);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -185,6 +186,7 @@ export default function QuestionsPage() {
   const silenceTimerRef = useRef(null);
   const lastSpeechTimeRef = useRef(Date.now());
   const listeningRef = useRef(false);
+  const countdownIntervalRef = useRef(null);
   const { id } = useParams();
 
   const SILENCE_THRESHOLD = 10000; // 10 seconds
@@ -411,24 +413,67 @@ export default function QuestionsPage() {
 
   // Monitor transcript changes and reset silence timer
   useEffect(() => {
-    if (listening && finalTranscript) {
+    if (listening && (finalTranscript || interimTranscript)) {
       lastSpeechTimeRef.current = Date.now();
+      
+      // Cancel countdown if user starts speaking again
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        setSilenceCountdown(null);
+        console.log('User resumed speaking - countdown cancelled');
+      }
+      
       resetSilenceTimer();
     }
-  }, [finalTranscript, listening]);
+  }, [finalTranscript, interimTranscript, listening]);
+
+  // Cleanup countdown on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+    };
+  }, []);
 
   // Silence detection timer
   const resetSilenceTimer = () => {
+    // Clear existing silence timer
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
+    }
+    
+    // Clear countdown if it's running
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      setSilenceCountdown(null);
+    }
+
+    // Only start new timer if we have some transcript
+    if (!finalTranscript.trim() && !interimTranscript.trim()) {
+      return;
     }
 
     silenceTimerRef.current = setTimeout(() => {
       const timeSinceLastSpeech = Date.now() - lastSpeechTimeRef.current;
       if (timeSinceLastSpeech >= SILENCE_THRESHOLD && finalTranscript.trim()) {
-        console.log('5 seconds of silence detected. Stopping listening...');
-        stopListening();
-        moveToNextQuestion();
+        console.log('10 seconds of silence detected. Starting countdown...');
+        
+        // Start countdown from 10 to 0
+        let countdown = 10;
+        setSilenceCountdown(countdown);
+        
+        countdownIntervalRef.current = setInterval(() => {
+          countdown -= 1;
+          setSilenceCountdown(countdown);
+          
+          if (countdown <= 0) {
+            clearInterval(countdownIntervalRef.current);
+            setSilenceCountdown(null);
+            stopListening();
+            moveToNextQuestion();
+          }
+        }, 1000);
       }
     }, SILENCE_THRESHOLD);
   };
@@ -501,6 +546,10 @@ export default function QuestionsPage() {
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
       }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+      setSilenceCountdown(null);
       console.log('Speech recognition stopped');
     }
   };
@@ -845,6 +894,45 @@ export default function QuestionsPage() {
               </Typography>
             </Box>
 
+            {/* Silence Countdown Timer */}
+            {silenceCountdown !== null && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: '20px',
+                  left: '20px',
+                  backgroundColor: 'rgba(211, 47, 47, 0.85)',
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 2px 8px rgba(211, 47, 47, 0.3)',
+                  zIndex: 1000,
+                }}
+              >
+                <Typography
+                  variant="h6"
+                  sx={{
+                    color: '#ffffff',
+                    fontWeight: 'bold',
+                    fontSize: '1.2rem',
+                  }}
+                >
+                  {silenceCountdown}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: '#ffffff',
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  sec will auto-submit due to silence
+                </Typography>
+              </Box>
+            )}
+
             {/* User Waveform Visualization */}
             {listening && (
               <Box sx={styles.waveformContainer}>
@@ -878,8 +966,6 @@ export default function QuestionsPage() {
             </Box>
           </Box>
         </Box>
-
-
       </Box>
     </ThemeProvider>
   );
