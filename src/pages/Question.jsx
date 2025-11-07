@@ -30,7 +30,8 @@ import {
 } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
-
+import { useParams } from 'react-router-dom';
+import generateQuestions from '../Api/generateQuestions';
 
 const theme = createTheme({
   palette: {
@@ -53,7 +54,6 @@ const theme = createTheme({
     },
   },
 });
-
 
 const styles = {
   container: {
@@ -107,7 +107,6 @@ const styles = {
   },
 };
 
-
 export default function QuestionsPage() {
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -123,36 +122,42 @@ export default function QuestionsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
+  const { id } = useParams();
 
+  console.log("UUID from params:", id);
 
- // Fetch questions from API on component mount
-useEffect(() => {
+  // Fetch questions from API on component mount
+ useEffect(() => {
   const fetchQuestions = async () => {
     try {
       setIsLoading(true);
       setError(null);
       
-      // Job description payload
       const payload = {
-        jd: "We are seeking a skilled Java Developer to join our team in a full-time remote position. The ideal candidate will be responsible for developing high-performance applications using Java technologies. Key Skills: • Core Java/J2EE • Spring Framework • RESTful Web Services • SQL/Database Management • Object-Oriented Programming (OOP) • Git Version Control • Microservices Architecture. Key Responsibilities: • Design and develop high-performance, scalable Java applications • Write clean, maintainable, and efficient code • Participate in code reviews and implement best practices • Troubleshoot and debug applications • Collaborate with cross-functional teams to analyze and improve application performance • Create and maintain technical documentation • Participate in the complete software development lifecycle. Required Qualifications: • Bachelor's degree in Computer Science, Software Engineering, or related technical field • Master's degree preferred but not required. Relevant Certifications (Preferred): • Oracle Certified Professional Java Developer • Spring Professional Certification • AWS Certified Developer • Oracle Certified Expert, Java EE Developer. Experience Requirements: • 3-7 years of overall software development experience • 3+ years in Core Java/J2EE development • 2+ years with Spring Framework • 2+ years working with RESTful Web Services • 2+ years of SQL/Database experience • 1+ year with Microservices Architecture. Work Arrangement: Remote (IST timezone). Compensation: 10-16 LPA"
+        uuid: id
       };
       
-      // POST request to generate questions
-      const response = await axios.post('/generate-questions', payload);
+      console.log("Sending payload to API:", payload);
       
-      // Assuming the API returns an array of questions
-      // Adjust based on your actual API response structure
-      const fetchedQuestions = response.data;
+      const response = await generateQuestions(payload);
       
-      // If the API returns data in a nested structure, adjust accordingly
-      // Example: const fetchedQuestions = response.data.questions;
+      console.log("API response:", response);
+      
+      // Transform the API response to match component structure
+      const fetchedQuestions = response.questions || response.data?.questions || [];
       
       if (fetchedQuestions && fetchedQuestions.length > 0) {
-        setQuestions(fetchedQuestions);
+        // Map API response to component format
+        const transformedQuestions = fetchedQuestions.map((q) => ({
+          id: q.question_number,
+          text: q.question,
+          category: q.difficulty
+        }));
+        
+        setQuestions(transformedQuestions);
       } else {
         throw new Error('No questions received from API');
       }
@@ -168,8 +173,14 @@ useEffect(() => {
     }
   };
 
-  fetchQuestions();
-}, []); // Empty dependency array ensures this runs once on mount
+  if (id) {
+    fetchQuestions();
+  } else {
+    setError('Invalid interview link. UUID is missing.');
+    setIsLoading(false);
+  }
+}, [id]);
+
 
 
 
@@ -185,7 +196,6 @@ useEffect(() => {
     };
   }, []);
 
-
   const showAlertMessage = (message, severity = 'warning') => {
     setAlertMessage(message);
     setAlertSeverity(severity);
@@ -193,18 +203,15 @@ useEffect(() => {
     setTimeout(() => setShowAlert(false), 3000);
   };
 
-
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
 
-
       mediaRecorderRef.current.ondataavailable = (event) => {
         audioChunksRef.current.push(event.data);
       };
-
 
       mediaRecorderRef.current.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
@@ -212,11 +219,9 @@ useEffect(() => {
         saveAnswer(currentAnswer || '[Audio Recording Completed]');
       };
 
-
       mediaRecorderRef.current.start();
       setIsRecording(true);
       setRecordingTime(0);
-
 
       timerRef.current = setInterval(() => {
         setRecordingTime((prev) => prev + 1);
@@ -229,7 +234,6 @@ useEffect(() => {
     }
   };
 
-
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -238,7 +242,6 @@ useEffect(() => {
       clearInterval(timerRef.current);
     }
   };
-
 
   const saveAnswer = (answer) => {
     const newAnswer = {
@@ -249,11 +252,9 @@ useEffect(() => {
       timestamp: new Date().toISOString(),
     };
 
-
     const updatedAnswers = [...answers, newAnswer];
     setAnswers(updatedAnswers);
     setCurrentAnswer('');
-
 
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
@@ -262,13 +263,11 @@ useEffect(() => {
     }
   };
 
-
   const handleNextQuestion = () => {
     if (!currentAnswer.trim() && !isRecording) {
       showAlertMessage('Please provide an answer before moving to the next question', 'warning');
       return;
     }
-
 
     if (isRecording) {
       stopRecording();
@@ -277,13 +276,11 @@ useEffect(() => {
     }
   };
 
-
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
-
 
   const speakQuestion = () => {
     if ('speechSynthesis' in window) {
@@ -298,7 +295,6 @@ useEffect(() => {
     }
   };
 
-
   const stopSpeaking = () => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -307,46 +303,15 @@ useEffect(() => {
   };
 
 
-  const downloadResults = () => {
-    const results = {
-      interviewDate: new Date().toISOString(),
-      totalQuestions: questions.length,
-      answeredQuestions: answers.length,
-      responses: answers,
-    };
-
-
-    const blob = new Blob([JSON.stringify(results, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `interview-results-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-
-  const resetInterview = () => {
-    setCurrentQuestionIndex(0);
-    setAnswers([]);
-    setCurrentAnswer('');
-    setIsComplete(false);
-    setIsRecording(false);
-    setRecordingTime(0);
-  };
-
+  
 
   const handleSkipQuestion = () => {
     saveAnswer('[Question Skipped]');
   };
 
-
   const retryFetchQuestions = () => {
     window.location.reload();
   };
-
 
   // Loading state
   if (isLoading) {
@@ -368,7 +333,6 @@ useEffect(() => {
       </ThemeProvider>
     );
   }
-
 
   // Error state
   if (error || questions.length === 0) {
@@ -401,7 +365,6 @@ useEffect(() => {
     );
   }
 
-
   // Render interview questions
   return (
     <ThemeProvider theme={theme}>
@@ -414,13 +377,11 @@ useEffect(() => {
             Answer each question thoughtfully. You can type or record your response.
           </Typography>
 
-
           {showAlert && (
             <Alert severity={alertSeverity} sx={{ mb: 3 }}>
               {alertMessage}
             </Alert>
           )}
-
 
           <Box>
             <Box
@@ -441,13 +402,11 @@ useEffect(() => {
               />
             </Box>
 
-
             <LinearProgress
               variant="determinate"
               value={((currentQuestionIndex + 1) / questions.length) * 100}
               sx={styles.progressBar}
             />
-
 
             <Card sx={styles.questionCard}>
               <CardContent>
@@ -482,7 +441,6 @@ useEffect(() => {
               </CardContent>
             </Card>
 
-
             <TextField
               fullWidth
               multiline
@@ -495,7 +453,6 @@ useEffect(() => {
               disabled={isRecording}
               sx={{ mb: 3 }}
             />
-
 
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
@@ -514,7 +471,6 @@ useEffect(() => {
                 </Button>
               </Grid>
 
-
               <Grid item xs={12} sm={6}>
                 <Button
                   fullWidth
@@ -529,7 +485,6 @@ useEffect(() => {
                     : 'Finish Interview'}
                 </Button>
               </Grid>
-
 
               <Grid item xs={12}>
                 <Button
