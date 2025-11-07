@@ -2,33 +2,18 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Box,
   Button,
-  TextField,
   Typography,
   Paper,
   LinearProgress,
-  Card,
-  CardContent,
-  IconButton,
-  Grid,
-  Chip,
   Alert,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Divider,
   CircularProgress,
+  Chip,
 } from '@mui/material';
 import {
-  Mic,
-  Stop,
-  ArrowForward,
-  PlayArrow,
-  CheckCircle,
-  Download,
   Refresh,
   Videocam,
-  VideocamOff,
+  Mic,
+  CheckCircle,
 } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
@@ -63,81 +48,101 @@ const styles = {
     inset: 0,
     height: '100vh',
     width: '100%',
-    background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
     padding: 0,
     display: 'flex',
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  splitContainer: {
+    display: 'flex',
+    width: '100%',
+    height: '100vh',
+  },
+  aiSection: {
+    flex: 1,
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+    padding: '40px',
+    borderRight: '4px solid rgba(255, 255, 255, 0.1)',
   },
-  mainCard: {
+  userSection: {
+    flex: 1,
+    background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    padding: '40px',
+  },
+  videoContainer: {
+    width: '100%',
+    maxWidth: '500px',
+    aspectRatio: '16/9',
+    backgroundColor: '#000',
+    borderRadius: '16px',
+    overflow: 'hidden',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+    position: 'relative',
+    marginTop: '20px',
+  },
+  video: {
     width: '100%',
     height: '100%',
-    maxWidth: '100%',
-    margin: 0,
-    padding: '32px',
-    borderRadius: 0,
-    boxShadow: 'none',
-    overflow: 'auto',
+    objectFit: 'cover',
   },
-  questionCard: {
-    background: 'linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%)',
+  transcriptBox: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: '16px',
     padding: '24px',
-    borderRadius: '12px',
-    marginBottom: '24px',
+    marginTop: '20px',
+    minHeight: '150px',
+    maxHeight: '200px',
+    width: '100%',
+    maxWidth: '500px',
+    overflowY: 'auto',
+    boxShadow: '0 10px 30px rgba(0,0,0,0.2)',
   },
-  recordingButton: {
-    minHeight: '56px',
-    borderRadius: '28px',
+  waveformContainer: {
+    position: 'absolute',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    gap: '4px',
+    alignItems: 'center',
+    height: '60px',
   },
-  progressBar: {
-    height: '8px',
-    borderRadius: '4px',
-    marginBottom: '16px',
+  waveBar: {
+    width: '4px',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderRadius: '2px',
+    transition: 'height 0.1s ease',
   },
-  answerSummary: {
-    borderLeft: '4px solid #3f51b5',
-    paddingLeft: '16px',
-    marginBottom: '16px',
+  pulsingGlow: {
+    animation: 'pulse 2s ease-in-out infinite',
+    boxShadow: '0 0 30px rgba(255, 255, 255, 0.6)',
+  },
+  statusChip: {
+    position: 'absolute',
+    top: '20px',
+    right: '20px',
+    fontSize: '14px',
+    fontWeight: 'bold',
   },
   loadingContainer: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: '400px',
+    minHeight: '100vh',
     gap: 2,
-  },
-  videoContainer: {
-    position: 'relative',
-    width: '100%',
-    maxWidth: '640px',
-    margin: '0 auto',
-    backgroundColor: '#000',
-    borderRadius: '12px',
-    overflow: 'hidden',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-  },
-  video: {
-    width: '100%',
-    height: 'auto',
-    display: 'block',
-  },
-  videoPlaceholder: {
-    padding: '100px 20px',
-    textAlign: 'center',
-    color: '#fff',
-    backgroundColor: '#333',
-  },
-  recordingIndicator: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    animation: 'pulse 1.5s ease-in-out infinite',
-  },
-  cameraStatus: {
-    position: 'absolute',
-    top: 16,
-    left: 16,
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
   },
 };
 
@@ -145,48 +150,64 @@ export default function QuestionsPage() {
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState([]);
-  const [isRecording, setIsRecording] = useState(false);
   const [currentAnswer, setCurrentAnswer] = useState('');
-  const [recordingTime, setRecordingTime] = useState(0);
   const [showAlert, setShowAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [alertSeverity, setAlertSeverity] = useState('warning');
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [videoStream, setVideoStream] = useState(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [sessionId, setSessionId] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [finalTranscript, setFinalTranscript] = useState('');
+  const [aiWaveform, setAiWaveform] = useState([]);
+  const [userWaveform, setUserWaveform] = useState([]);
+  const [silenceTimer, setSilenceTimer] = useState(null);
+  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-  const timerRef = useRef(null);
   const videoRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const lastSpeechTimeRef = useRef(Date.now());
   const { id } = useParams();
 
-  console.log("UUID from params:", id);
+  const SILENCE_THRESHOLD = 5000; // 5 seconds
 
-  // Initialize camera when component mounts
+  // Initialize camera and recording when component mounts
   useEffect(() => {
-    const initializeCamera = async () => {
+    const initializeMediaDevices = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: true, 
-          video: { 
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: {
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            facingMode: "user" 
-          } 
+            facingMode: 'user',
+          },
         });
-        
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
-        
+
         setVideoStream(stream);
         setIsCameraActive(true);
-        console.log('Camera initialized successfully');
+        
+        // Start continuous video recording
+        startContinuousRecording(stream);
+        
+        // Initialize audio context for visualization
+        initializeAudioVisualization(stream);
+        
+        console.log('Camera and recording initialized successfully');
       } catch (err) {
         console.error('Camera initialization error:', err);
         showAlertMessage(
@@ -196,52 +217,147 @@ export default function QuestionsPage() {
       }
     };
 
-    initializeCamera();
+    initializeMediaDevices();
 
-    // Cleanup function - properly stop camera when component unmounts
     return () => {
+      // Cleanup
       if (videoRef.current && videoRef.current.srcObject) {
         const tracks = videoRef.current.srcObject.getTracks();
-        tracks.forEach((track) => {
-          track.stop();
-          console.log('Track stopped:', track.kind);
-        });
+        tracks.forEach((track) => track.stop());
         videoRef.current.srcObject = null;
       }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
     };
-  }, []); // Empty dependency array - runs once on mount
+  }, []);
 
-  // Fetch questions from API on component mount
+  // Start continuous video recording
+  const startContinuousRecording = (stream) => {
+    try {
+      const mimeType = getSupportedMimeType();
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 2500000,
+      });
+
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        const videoBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        console.log('Recording segment completed. Size:', videoBlob.size);
+        
+        const questionData = {
+          questionId: questions[currentQuestionIndex]?.id,
+          question: questions[currentQuestionIndex]?.text,
+          category: questions[currentQuestionIndex]?.category,
+          timestamp: new Date().toISOString(),
+          answer: finalTranscript,
+        };
+
+        try {
+          await uploadVideo(videoBlob, questionData);
+        } catch (uploadErr) {
+          console.error('Upload failed:', uploadErr);
+        }
+
+        // Restart recording for next question if not complete
+        if (!isComplete && videoStream) {
+          audioChunksRef.current = [];
+          mediaRecorderRef.current.start(1000);
+        }
+      };
+
+      mediaRecorderRef.current.start(1000);
+      setIsRecordingVideo(true);
+      console.log('Continuous recording started');
+    } catch (err) {
+      console.error('Recording start error:', err);
+      showAlertMessage('Could not start recording', 'error');
+    }
+  };
+
+  // Initialize audio visualization
+  const initializeAudioVisualization = (stream) => {
+    try {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      
+      analyserRef.current.fftSize = 256;
+      source.connect(analyserRef.current);
+
+      // Start visualization loop
+      visualizeAudio();
+    } catch (err) {
+      console.error('Audio visualization error:', err);
+    }
+  };
+
+  // Audio visualization loop
+  const visualizeAudio = () => {
+    if (!analyserRef.current) return;
+
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    
+    const draw = () => {
+      requestAnimationFrame(draw);
+      analyserRef.current.getByteFrequencyData(dataArray);
+
+      // Generate waveform bars (20 bars)
+      const bars = [];
+      const step = Math.floor(dataArray.length / 20);
+      for (let i = 0; i < 20; i++) {
+        const value = dataArray[i * step] || 0;
+        bars.push(Math.max(5, (value / 255) * 60)); // Scale to 60px max height
+      }
+
+      if (isListening) {
+        setUserWaveform(bars);
+      } else if (isSpeaking) {
+        setAiWaveform(bars);
+      }
+    };
+
+    draw();
+  };
+
+  // Fetch questions from API
   useEffect(() => {
     const fetchQuestions = async () => {
       try {
         setIsLoading(true);
         setError(null);
-        
-        const payload = {
-          uuid: id
-        };
-        
-        console.log("Sending payload to API:", payload);
-        
+
+        const payload = { uuid: id };
         const response = await generateQuestions(payload);
-        
-        console.log("API response:", response);
-        
-        // Handle single question object from API
+
         if (response && response.question) {
           const transformedQuestion = {
             id: response.question_number,
             text: response.question,
-            category: response.difficulty
+            category: response.difficulty,
           };
-          
-          // Store sessionId for later use
+
           if (response.sessionId) {
             setSessionId(response.sessionId);
           }
-          
-          // Set as array with single question
+
           setQuestions([transformedQuestion]);
           console.log('Question loaded successfully:', transformedQuestion);
         } else {
@@ -249,11 +365,8 @@ export default function QuestionsPage() {
         }
       } catch (err) {
         console.error('Error fetching questions:', err);
-        setError(err.message || 'Failed to load questions. Please try again.');
-        showAlertMessage(
-          'Failed to load questions. Please refresh the page.',
-          'error'
-        );
+        setError(err.message || 'Failed to load questions');
+        showAlertMessage('Failed to load questions', 'error');
       } finally {
         setIsLoading(false);
       }
@@ -267,185 +380,174 @@ export default function QuestionsPage() {
     }
   }, [id]);
 
-  // Cleanup on unmount
+  // Auto-start question reading when questions are loaded
   useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+    if (questions.length > 0 && !isLoading && isCameraActive) {
+      // Small delay to ensure everything is ready
+      setTimeout(() => {
+        speakQuestion();
+      }, 1000);
+    }
+  }, [questions, isLoading, isCameraActive]);
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      showAlertMessage('Speech recognition not supported', 'error');
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = 'en-US';
+
+    recognitionRef.current.onstart = () => {
+      console.log('Speech recognition started');
+      setIsListening(true);
+    };
+
+    recognitionRef.current.onresult = (event) => {
+      let interim = '';
+      let final = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          final += transcript + ' ';
+        } else {
+          interim += transcript;
+        }
       }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+
+      if (interim) {
+        setInterimTranscript(interim);
+      }
+
+      if (final) {
+        setFinalTranscript((prev) => prev + final);
+        setInterimTranscript('');
+        lastSpeechTimeRef.current = Date.now();
+        resetSilenceTimer();
+      }
+    };
+
+    recognitionRef.current.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      if (event.error === 'no-speech') {
+        // Restart recognition
+        setTimeout(() => {
+          if (isListening && recognitionRef.current) {
+            recognitionRef.current.start();
+          }
+        }, 100);
+      }
+    };
+
+    recognitionRef.current.onend = () => {
+      console.log('Speech recognition ended');
+      // Auto-restart if we're still listening
+      if (isListening && !isComplete) {
+        setTimeout(() => {
+          try {
+            recognitionRef.current.start();
+          } catch (err) {
+            console.error('Failed to restart recognition:', err);
+          }
+        }, 100);
       }
     };
   }, []);
 
-  const showAlertMessage = (message, severity = 'warning') => {
-    setAlertMessage(message);
-    setAlertSeverity(severity);
-    setShowAlert(true);
-    setTimeout(() => setShowAlert(false), 3000);
+  // Silence detection timer
+  const resetSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+    }
+
+    silenceTimerRef.current = setTimeout(() => {
+      const timeSinceLastSpeech = Date.now() - lastSpeechTimeRef.current;
+      if (timeSinceLastSpeech >= SILENCE_THRESHOLD && finalTranscript.trim()) {
+        console.log('5 seconds of silence detected. Stopping listening...');
+        stopListening();
+        moveToNextQuestion();
+      }
+    }, SILENCE_THRESHOLD);
   };
 
-  // Get supported MIME type for cross-browser compatibility
-  const getSupportedMimeType = () => {
-    const types = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=h264,opus',
-      'video/webm',
-      'video/mp4',
-    ];
+  // Speak question using TTS
+  const speakQuestion = () => {
+    if (!questions[currentQuestionIndex]) return;
 
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        console.log('Supported MIME type:', type);
-        return type;
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel(); // Cancel any ongoing speech
+
+      const speech = new SpeechSynthesisUtterance(questions[currentQuestionIndex].text);
+      speech.rate = 0.9;
+      speech.pitch = 1.0;
+      speech.volume = 1.0;
+
+      speech.onstart = () => {
+        setIsSpeaking(true);
+        console.log('AI started speaking');
+      };
+
+      speech.onend = () => {
+        setIsSpeaking(false);
+        console.log('AI finished speaking');
+        
+        // Start listening after AI finishes speaking
+        setTimeout(() => {
+          startListening();
+        }, 500);
+      };
+
+      speech.onerror = (event) => {
+        console.error('Speech synthesis error:', event);
+        setIsSpeaking(false);
+        // Start listening anyway
+        startListening();
+      };
+
+      window.speechSynthesis.speak(speech);
+    } else {
+      showAlertMessage('Text-to-speech not supported', 'warning');
+      startListening();
+    }
+  };
+
+  // Start listening for user answer
+  const startListening = () => {
+    if (recognitionRef.current && !isListening) {
+      try {
+        setFinalTranscript('');
+        setInterimTranscript('');
+        lastSpeechTimeRef.current = Date.now();
+        recognitionRef.current.start();
+        resetSilenceTimer();
+        showAlertMessage('Listening... Speak your answer', 'info');
+      } catch (err) {
+        console.error('Failed to start listening:', err);
       }
     }
-    return 'video/webm'; // fallback
   };
 
-  // Upload video to server
-  const uploadVideo = async (videoBlob, questionData) => {
-    try {
-      const formData = new FormData();
-      
-      // Append video file
-      const timestamp = new Date().getTime();
-      formData.append('video', videoBlob, `interview-q${questionData.questionId}-${timestamp}.webm`);
-      
-      // Append metadata
-      formData.append('questionId', questionData.questionId);
-      formData.append('questionText', questionData.question);
-      formData.append('category', questionData.category);
-      formData.append('sessionId', sessionId || id);
-      formData.append('uuid', id);
-      formData.append('timestamp', questionData.timestamp);
-      
-      console.log('Uploading video...', {
-        size: videoBlob.size,
-        type: videoBlob.type,
-        questionId: questionData.questionId
-      });
-      
-      // Replace with your actual upload endpoint
-      const response = await axios.post('/api/upload-interview-video', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
-          );
-          console.log('Upload progress:', percentCompleted + '%');
-        },
-      });
-      
-      console.log('Video uploaded successfully:', response.data);
-      showAlertMessage('Video uploaded successfully', 'success');
-      return response.data;
-    } catch (err) {
-      console.error('Video upload error:', err);
-      showAlertMessage('Failed to upload video. Will retry...', 'warning');
-      // You might want to implement retry logic here
-      throw err;
-    }
-  };
-
-  const startRecording = async () => {
-    try {
-      if (!videoStream) {
-        showAlertMessage('Camera is not active. Please reload the page.', 'error');
-        return;
+  // Stop listening
+  const stopListening = () => {
+    if (recognitionRef.current && isListening) {
+      setIsListening(false);
+      recognitionRef.current.stop();
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
       }
-
-      // Get supported MIME type
-      const mimeType = getSupportedMimeType();
-      
-      // Create MediaRecorder with existing video stream
-      mediaRecorderRef.current = new MediaRecorder(videoStream, {
-        mimeType: mimeType,
-        videoBitsPerSecond: 2500000, // 2.5 Mbps for good quality
-      });
-      
-      audioChunksRef.current = [];
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-          console.log('Data chunk received:', event.data.size, 'bytes');
-        }
-      };
-
-      mediaRecorderRef.current.onstop = async () => {
-        const videoBlob = new Blob(audioChunksRef.current, { 
-          type: mimeType 
-        });
-        
-        console.log('Recording stopped. Video size:', videoBlob.size, 'bytes');
-        
-        // Create download URL for the video (for debugging)
-        const videoUrl = URL.createObjectURL(videoBlob);
-        console.log('Video URL:', videoUrl);
-        
-        // Prepare question data for upload
-        const questionData = {
-          questionId: questions[currentQuestionIndex].id,
-          question: questions[currentQuestionIndex].text,
-          category: questions[currentQuestionIndex].category,
-          timestamp: new Date().toISOString(),
-        };
-        
-        // Upload the video to your server
-        try {
-          await uploadVideo(videoBlob, questionData);
-        } catch (uploadErr) {
-          console.error('Upload failed, but continuing...', uploadErr);
-        }
-        
-        // Save answer after upload attempt
-        saveAnswer(currentAnswer || '[Video Recording Completed]');
-        
-        // Clean up the object URL
-        setTimeout(() => URL.revokeObjectURL(videoUrl), 1000);
-      };
-
-      mediaRecorderRef.current.onerror = (event) => {
-        console.error('MediaRecorder error:', event);
-        showAlertMessage('Recording error occurred', 'error');
-      };
-
-      // Start recording with timeslice for regular data chunks
-      mediaRecorderRef.current.start(1000); // Get data every second
-      setIsRecording(true);
-      setRecordingTime(0);
-
-      timerRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-      
-      showAlertMessage('Recording started successfully', 'success');
-    } catch (err) {
-      console.error('Recording start error:', err);
-      showAlertMessage(
-        'Could not start recording. Please try again.',
-        'error'
-      );
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      clearInterval(timerRef.current);
-      
-      // Camera stays on as required
-      showAlertMessage('Recording stopped. Processing video...', 'info');
-    }
-  };
-
-  const saveAnswer = (answer) => {
+  // Move to next question
+  const moveToNextQuestion = () => {
+    const answer = finalTranscript.trim() || '[No response]';
+    
     const newAnswer = {
       questionId: questions[currentQuestionIndex].id,
       question: questions[currentQuestionIndex].text,
@@ -458,69 +560,78 @@ export default function QuestionsPage() {
     const updatedAnswers = [...answers, newAnswer];
     setAnswers(updatedAnswers);
     setCurrentAnswer('');
+    setFinalTranscript('');
+    setInterimTranscript('');
+
+    // Stop current recording segment
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
 
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
       showAlertMessage('Moving to next question', 'info');
+      
+      // Speak next question after a brief pause
+      setTimeout(() => {
+        speakQuestion();
+      }, 1500);
     } else {
       setIsComplete(true);
+      stopListening();
       showAlertMessage('Interview completed!', 'success');
     }
   };
 
-  const handleNextQuestion = () => {
-    if (!currentAnswer.trim() && !isRecording) {
-      showAlertMessage('Please provide an answer before moving to the next question', 'warning');
-      return;
-    }
+  // Upload video
+  const uploadVideo = async (videoBlob, questionData) => {
+    try {
+      const formData = new FormData();
+      const timestamp = new Date().getTime();
+      formData.append('video', videoBlob, `interview-q${questionData.questionId}-${timestamp}.webm`);
+      formData.append('questionId', questionData.questionId);
+      formData.append('questionText', questionData.question);
+      formData.append('category', questionData.category);
+      formData.append('sessionId', sessionId || id);
+      formData.append('uuid', id);
+      formData.append('timestamp', questionData.timestamp);
+      formData.append('answer', questionData.answer);
 
-    if (isRecording) {
-      stopRecording();
-    } else {
-      saveAnswer(currentAnswer);
-    }
-  };
+      const response = await axios.post('/api/upload-interview-video', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const speakQuestion = () => {
-    if ('speechSynthesis' in window) {
-      const speech = new SpeechSynthesisUtterance(
-        questions[currentQuestionIndex].text
-      );
-      speech.rate = 0.9; // Slightly slower for clarity
-      speech.pitch = 1.0;
-      speech.volume = 1.0;
-      
-      speech.onstart = () => setIsSpeaking(true);
-      speech.onend = () => setIsSpeaking(false);
-      speech.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
-        setIsSpeaking(false);
-      };
-      
-      window.speechSynthesis.speak(speech);
-    } else {
-      showAlertMessage('Text-to-speech is not supported in your browser', 'warning');
+      console.log('Video uploaded successfully:', response.data);
+      return response.data;
+    } catch (err) {
+      console.error('Video upload error:', err);
+      throw err;
     }
   };
 
-  const stopSpeaking = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
+  // Get supported MIME type
+  const getSupportedMimeType = () => {
+    const types = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=h264,opus',
+      'video/webm',
+      'video/mp4',
+    ];
+
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        return type;
+      }
     }
+    return 'video/webm';
   };
 
-  const handleSkipQuestion = () => {
-    if (isRecording) {
-      stopRecording();
-    }
-    saveAnswer('[Question Skipped]');
+  const showAlertMessage = (message, severity = 'warning') => {
+    setAlertMessage(message);
+    setAlertSeverity(severity);
+    setShowAlert(true);
+    setTimeout(() => setShowAlert(false), 3000);
   };
 
   const retryFetchQuestions = () => {
@@ -531,18 +642,14 @@ export default function QuestionsPage() {
   if (isLoading) {
     return (
       <ThemeProvider theme={theme}>
-        <Box sx={styles.container}>
-          <Paper elevation={3} sx={styles.mainCard}>
-            <Box sx={styles.loadingContainer}>
-              <CircularProgress size={60} />
-              <Typography variant="h6" color="textSecondary">
-                Loading Questions...
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                Please wait while we prepare your interview
-              </Typography>
-            </Box>
-          </Paper>
+        <Box sx={styles.loadingContainer}>
+          <CircularProgress size={60} sx={{ color: '#fff' }} />
+          <Typography variant="h6" sx={{ color: '#fff', mt: 2 }}>
+            Loading Interview...
+          </Typography>
+          <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+            Please wait while we prepare your session
+          </Typography>
         </Box>
       </ThemeProvider>
     );
@@ -552,28 +659,21 @@ export default function QuestionsPage() {
   if (error || questions.length === 0) {
     return (
       <ThemeProvider theme={theme}>
-        <Box sx={styles.container}>
-          <Paper elevation={3} sx={styles.mainCard}>
-            <Box sx={styles.loadingContainer}>
-              <Alert severity="error" sx={{ mb: 3, width: '100%', maxWidth: 600 }}>
-                {error || 'No questions available'}
-              </Alert>
-              <Typography variant="h6" color="textSecondary" gutterBottom>
-                Unable to Load Questions
-              </Typography>
-              <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
-                There was an error loading the interview questions.
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<Refresh />}
-                onClick={retryFetchQuestions}
-                size="large"
-              >
-                Retry
-              </Button>
-            </Box>
-          </Paper>
+        <Box sx={styles.loadingContainer}>
+          <Alert severity="error" sx={{ mb: 3, width: '100%', maxWidth: 600 }}>
+            {error || 'No questions available'}
+          </Alert>
+          <Typography variant="h6" sx={{ color: '#fff', mb: 2 }}>
+            Unable to Load Questions
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<Refresh />}
+            onClick={retryFetchQuestions}
+            size="large"
+          >
+            Retry
+          </Button>
         </Box>
       </ThemeProvider>
     );
@@ -583,219 +683,238 @@ export default function QuestionsPage() {
   if (isComplete) {
     return (
       <ThemeProvider theme={theme}>
-        <Box sx={styles.container}>
-          <Paper elevation={3} sx={styles.mainCard}>
-            <Box sx={styles.loadingContainer}>
-              <CheckCircle color="success" sx={{ fontSize: 80, mb: 3 }} />
-              <Typography variant="h4" color="primary" gutterBottom>
-                Interview Complete!
-              </Typography>
-              <Typography variant="body1" color="textSecondary" sx={{ mb: 3 }}>
-                Thank you for completing the AI screening round.
-              </Typography>
-              <Typography variant="body2" color="textSecondary" sx={{ mb: 4 }}>
-                You answered {answers.length} out of {questions.length} questions.
-              </Typography>
-              <Alert severity="success" sx={{ mb: 3, maxWidth: 600 }}>
-                Your responses have been recorded and will be reviewed by our team.
-              </Alert>
-            </Box>
-          </Paper>
+        <Box sx={styles.loadingContainer}>
+          <CheckCircle sx={{ fontSize: 80, mb: 3, color: '#4caf50' }} />
+          <Typography variant="h4" sx={{ color: '#fff', mb: 2 }}>
+            Interview Complete!
+          </Typography>
+          <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.9)', mb: 3 }}>
+            Thank you for completing the AI screening round.
+          </Typography>
+          <Alert severity="success" sx={{ maxWidth: 600 }}>
+            Your responses have been recorded and will be reviewed by our team.
+          </Alert>
         </Box>
       </ThemeProvider>
     );
   }
 
-  // Render interview questions
+  // Main interview UI - Split screen
   return (
     <ThemeProvider theme={theme}>
       <Box sx={styles.container}>
-        <Paper elevation={3} sx={styles.mainCard}>
-          <Typography variant="h4" component="h1" gutterBottom color="primary">
-            AI Screening Round
-          </Typography>
-          <Typography variant="body1" color="textSecondary" sx={{ mb: 4 }}>
-            Answer each question thoughtfully. You can type or record your response.
-          </Typography>
+        {showAlert && (
+          <Alert
+            severity={alertSeverity}
+            sx={{
+              position: 'fixed',
+              top: 20,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 9999,
+              minWidth: '300px',
+            }}
+          >
+            {alertMessage}
+          </Alert>
+        )}
 
-          {showAlert && (
-            <Alert severity={alertSeverity} sx={{ mb: 3 }}>
-              {alertMessage}
-            </Alert>
-          )}
+        <Box sx={styles.splitContainer}>
+          {/* AI Section - Left Half */}
+          <Box sx={{ ...styles.aiSection, ...(isSpeaking && styles.pulsingGlow) }}>
+            <Chip
+              label="● AI INTERVIEWER"
+              color="primary"
+              sx={styles.statusChip}
+            />
 
-          <Box>
-            <Box
+            <Typography
+              variant="h3"
               sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
+                color: '#fff',
+                fontWeight: 'bold',
+                textAlign: 'center',
                 mb: 2,
+                textShadow: '0 2px 10px rgba(0,0,0,0.3)',
               }}
             >
-              <Typography variant="body2" color="textSecondary">
-                Question {currentQuestionIndex + 1} of {questions.length}
-              </Typography>
-              <Chip
-                label={`${answers.length} Answered`}
-                color="success"
-                size="small"
-              />
+              AI Interviewer
+            </Typography>
+
+            <Typography
+              variant="h6"
+              sx={{
+                color: 'rgba(255,255,255,0.9)',
+                textAlign: 'center',
+                mb: 3,
+              }}
+            >
+              Question {currentQuestionIndex + 1} of {questions.length}
+            </Typography>
+
+            {/* AI Avatar/Icon */}
+            <Box
+              sx={{
+                width: '120px',
+                height: '120px',
+                borderRadius: '50%',
+                background: 'rgba(255,255,255,0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                mb: 3,
+                ...(isSpeaking && {
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                  boxShadow: '0 0 40px rgba(255,255,255,0.8)',
+                }),
+              }}
+            >
+              <Mic sx={{ fontSize: 60, color: '#fff' }} />
             </Box>
 
-            <LinearProgress
-              variant="determinate"
-              value={((currentQuestionIndex + 1) / questions.length) * 100}
-              sx={styles.progressBar}
+            {/* Question Display */}
+            <Box sx={styles.transcriptBox}>
+              {questions[currentQuestionIndex]?.category && (
+                <Chip
+                  label={questions[currentQuestionIndex].category}
+                  color="secondary"
+                  size="small"
+                  sx={{ mb: 2 }}
+                />
+              )}
+              <Typography variant="h6" sx={{ color: '#333', lineHeight: 1.6 }}>
+                {questions[currentQuestionIndex]?.text}
+              </Typography>
+            </Box>
+
+            {/* AI Waveform Visualization */}
+            {isSpeaking && (
+              <Box sx={styles.waveformContainer}>
+                {aiWaveform.map((height, index) => (
+                  <Box
+                    key={index}
+                    sx={{
+                      ...styles.waveBar,
+                      height: `${height}px`,
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
+          </Box>
+
+          {/* User Section - Right Half */}
+          <Box sx={{ ...styles.userSection, ...(isListening && styles.pulsingGlow) }}>
+            <Chip
+              label={isListening ? '● LISTENING' : '● STANDBY'}
+              color={isListening ? 'error' : 'default'}
+              sx={styles.statusChip}
             />
 
-            <Card sx={styles.questionCard}>
-              <CardContent>
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                  }}
-                >
-                  <Box sx={{ flex: 1 }}>
-                    {questions[currentQuestionIndex].category && (
-                      <Chip
-                        label={questions[currentQuestionIndex].category}
-                        color="primary"
-                        size="small"
-                        sx={{ mb: 2 }}
-                      />
-                    )}
-                    <Typography variant="h6" component="h2">
-                      {questions[currentQuestionIndex].text}
-                    </Typography>
-                  </Box>
-                  <IconButton
-                    onClick={isSpeaking ? stopSpeaking : speakQuestion}
-                    color={isSpeaking ? 'error' : 'primary'}
-                    sx={{ ml: 2 }}
-                  >
-                    {isSpeaking ? <Stop /> : <PlayArrow />}
-                  </IconButton>
-                </Box>
-              </CardContent>
-            </Card>
+            <Typography
+              variant="h3"
+              sx={{
+                color: '#fff',
+                fontWeight: 'bold',
+                textAlign: 'center',
+                mb: 2,
+                textShadow: '0 2px 10px rgba(0,0,0,0.3)',
+              }}
+            >
+              Your Response
+            </Typography>
 
-            {/* Camera Preview - Always Active */}
-            <Box sx={{ mb: 3 }}>
-              <Box sx={styles.videoContainer}>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  style={{
-                    ...styles.video,
-                    display: isCameraActive ? 'block' : 'none',
+            {/* Video Preview */}
+            <Box sx={styles.videoContainer}>
+              <video
+                ref={videoRef}
+                autoPlay
+                muted
+                playsInline
+                style={styles.video}
+              />
+              {isCameraActive && isRecordingVideo && (
+                <Chip
+                  icon={<Videocam />}
+                  label="RECORDING"
+                  color="error"
+                  sx={{
+                    position: 'absolute',
+                    top: 16,
+                    left: 16,
                   }}
                 />
-                {!isCameraActive && (
-                  <Box sx={styles.videoPlaceholder}>
-                    <VideocamOff sx={{ fontSize: 60, mb: 2, opacity: 0.5 }} />
-                    <Typography variant="body2">
-                      Camera is not active
-                    </Typography>
-                    <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>
-                      Please allow camera permissions and reload
-                    </Typography>
-                  </Box>
-                )}
-                
-                {/* Camera Active Indicator */}
-                {isCameraActive && !isRecording && (
-                  <Chip
-                    label="● Camera Active"
-                    color="success"
-                    size="small"
-                    sx={styles.cameraStatus}
-                  />
-                )}
-                
-                {/* Recording Indicator */}
-                {isRecording && (
-                  <Chip
-                    label={`● REC ${formatTime(recordingTime)}`}
-                    color="error"
-                    sx={styles.recordingIndicator}
-                  />
-                )}
-              </Box>
+              )}
             </Box>
 
-            <TextField
-              fullWidth
-              multiline
-              rows={6}
-              label="Your Answer"
-              value={currentAnswer}
-              onChange={(e) => setCurrentAnswer(e.target.value)}
-              placeholder="Type your answer here or use voice recording..."
-              variant="outlined"
-              disabled={isRecording}
-              sx={{ mb: 3 }}
-            />
+            {/* Transcript Display */}
+            <Box sx={styles.transcriptBox}>
+              <Typography variant="subtitle2" sx={{ color: '#666', mb: 1 }}>
+                Your Answer:
+              </Typography>
+              <Typography variant="body1" sx={{ color: '#333', lineHeight: 1.8 }}>
+                {finalTranscript}
+                {interimTranscript && (
+                  <span style={{ color: '#999', fontStyle: 'italic' }}>
+                    {interimTranscript}
+                  </span>
+                )}
+                {!finalTranscript && !interimTranscript && (
+                  <span style={{ color: '#999', fontStyle: 'italic' }}>
+                    Start speaking your answer...
+                  </span>
+                )}
+              </Typography>
+            </Box>
 
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6}>
-                <Button
-                  fullWidth
-                  variant={isRecording ? 'contained' : 'outlined'}
-                  color={isRecording ? 'error' : 'primary'}
-                  size="large"
-                  onClick={isRecording ? stopRecording : startRecording}
-                  startIcon={isRecording ? <Stop /> : <Mic />}
-                  sx={styles.recordingButton}
-                  disabled={!isCameraActive}
-                >
-                  {isRecording
-                    ? `Stop Recording (${formatTime(recordingTime)})`
-                    : 'Record Answer'}
-                </Button>
-              </Grid>
+            {/* User Waveform Visualization */}
+            {isListening && (
+              <Box sx={styles.waveformContainer}>
+                {userWaveform.map((height, index) => (
+                  <Box
+                    key={index}
+                    sx={{
+                      ...styles.waveBar,
+                      height: `${height}px`,
+                      backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
 
-              <Grid item xs={12} sm={6}>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  size="large"
-                  onClick={handleNextQuestion}
-                  endIcon={<ArrowForward />}
-                  sx={styles.recordingButton}
-                >
-                  {currentQuestionIndex < questions.length - 1
-                    ? 'Next Question'
-                    : 'Finish Interview'}
-                </Button>
-              </Grid>
-
-              <Grid item xs={12}>
-                <Button
-                  fullWidth
-                  variant="text"
-                  size="small"
-                  onClick={handleSkipQuestion}
-                  sx={{ textTransform: 'none' }}
-                >
-                  Skip this question
-                </Button>
-              </Grid>
-            </Grid>
+            {/* Progress Bar */}
+            <Box sx={{ width: '100%', maxWidth: '500px', mt: 3 }}>
+              <LinearProgress
+                variant="determinate"
+                value={((currentQuestionIndex + 1) / questions.length) * 100}
+                sx={{
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: 'rgba(255,255,255,0.3)',
+                  '& .MuiLinearProgress-bar': {
+                    backgroundColor: '#fff',
+                  },
+                }}
+              />
+            </Box>
           </Box>
-        </Paper>
-      </Box>
+        </Box>
 
-      <style jsx>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
+        <style jsx>{`
+          @keyframes pulse {
+            0%,
+            100% {
+              opacity: 1;
+              transform: scale(1);
+            }
+            50% {
+              opacity: 0.8;
+              transform: scale(1.05);
+            }
+          }
+        `}</style>
+      </Box>
     </ThemeProvider>
   );
 }
