@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import {
   Box,
   Button,
@@ -151,39 +152,42 @@ const styles = {
 };
 
 export default function QuestionsPage() {
+  const {
+    interimTranscript,
+    finalTranscript,
+    resetTranscript,
+    listening,
+    browserSupportsSpeechRecognition
+  } = useSpeechRecognition();
+
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState([]);
-  const [currentAnswer, setCurrentAnswer] = useState('');
   const [showAlert, setShowAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState('');
   const [alertSeverity, setAlertSeverity] = useState('warning');
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [videoStream, setVideoStream] = useState(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [sessionId, setSessionId] = useState('');
-  const [interimTranscript, setInterimTranscript] = useState('');
-  const [finalTranscript, setFinalTranscript] = useState('');
   const [aiWaveform, setAiWaveform] = useState([]);
   const [userWaveform, setUserWaveform] = useState([]);
-  const [silenceTimer, setSilenceTimer] = useState(null);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const videoRef = useRef(null);
-  const recognitionRef = useRef(null);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const lastSpeechTimeRef = useRef(Date.now());
+  const listeningRef = useRef(false);
   const { id } = useParams();
 
-  const SILENCE_THRESHOLD = 5000; // 5 seconds
+  const SILENCE_THRESHOLD = 10000; // 10 seconds
 
   // Initialize camera and recording when component mounts
   useEffect(() => {
@@ -236,12 +240,10 @@ export default function QuestionsPage() {
       if (audioContextRef.current) {
         audioContextRef.current.close();
       }
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
+      SpeechRecognition.stopListening();
     };
   }, []);
 
@@ -331,7 +333,7 @@ export default function QuestionsPage() {
         bars.push(Math.max(5, (value / 255) * 60)); // Scale to 60px max height
       }
 
-      if (isListening) {
+      if (listeningRef.current) {
         setUserWaveform(bars);
       } else if (isSpeaking) {
         setAiWaveform(bars);
@@ -394,75 +396,26 @@ export default function QuestionsPage() {
     }
   }, [questions, isLoading, isCameraActive]);
 
-  // Initialize speech recognition
+  // Check browser support
   useEffect(() => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      showAlertMessage('Speech recognition not supported', 'error');
-      return;
+    if (!browserSupportsSpeechRecognition) {
+      showAlertMessage('Speech recognition not supported in this browser', 'error');
+      setError('Speech recognition not supported. Please use Chrome or Edge.');
     }
+  }, [browserSupportsSpeechRecognition]);
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.continuous = true;
-    recognitionRef.current.interimResults = true;
-    recognitionRef.current.lang = 'en-US';
+  // Sync listening state to ref for use in animation frame
+  useEffect(() => {
+    listeningRef.current = listening;
+  }, [listening]);
 
-    recognitionRef.current.onstart = () => {
-      console.log('Speech recognition started');
-      setIsListening(true);
-    };
-
-    recognitionRef.current.onresult = (event) => {
-      let interim = '';
-      let final = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          final += transcript + ' ';
-        } else {
-          interim += transcript;
-        }
-      }
-
-      if (interim) {
-        setInterimTranscript(interim);
-      }
-
-      if (final) {
-        setFinalTranscript((prev) => prev + final);
-        setInterimTranscript('');
-        lastSpeechTimeRef.current = Date.now();
-        resetSilenceTimer();
-      }
-    };
-
-    recognitionRef.current.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      if (event.error === 'no-speech') {
-        // Restart recognition
-        setTimeout(() => {
-          if (isListening && recognitionRef.current) {
-            recognitionRef.current.start();
-          }
-        }, 100);
-      }
-    };
-
-    recognitionRef.current.onend = () => {
-      console.log('Speech recognition ended');
-      // Auto-restart if we're still listening
-      if (isListening && !isComplete) {
-        setTimeout(() => {
-          try {
-            recognitionRef.current.start();
-          } catch (err) {
-            console.error('Failed to restart recognition:', err);
-          }
-        }, 100);
-      }
-    };
-  }, []);
+  // Monitor transcript changes and reset silence timer
+  useEffect(() => {
+    if (listening && finalTranscript) {
+      lastSpeechTimeRef.current = Date.now();
+      resetSilenceTimer();
+    }
+  }, [finalTranscript, listening]);
 
   // Silence detection timer
   const resetSilenceTimer = () => {
@@ -521,30 +474,34 @@ export default function QuestionsPage() {
     }
   };
 
-  // Start listening for user answer
+  // Start listening for user answer (using react-speech-recognition)
   const startListening = () => {
-    if (recognitionRef.current && !isListening) {
+    if (!listening) {
       try {
-        setFinalTranscript('');
-        setInterimTranscript('');
+        resetTranscript();
         lastSpeechTimeRef.current = Date.now();
-        recognitionRef.current.start();
+        SpeechRecognition.startListening({ 
+          continuous: true,
+          language: 'en-US',
+        });
         resetSilenceTimer();
         showAlertMessage('Listening... Speak your answer', 'info');
+        console.log('Speech recognition started');
       } catch (err) {
         console.error('Failed to start listening:', err);
+        showAlertMessage('Failed to start listening', 'error');
       }
     }
   };
 
   // Stop listening
   const stopListening = () => {
-    if (recognitionRef.current && isListening) {
-      setIsListening(false);
-      recognitionRef.current.stop();
+    if (listening) {
+      SpeechRecognition.stopListening();
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
       }
+      console.log('Speech recognition stopped');
     }
   };
 
@@ -563,9 +520,7 @@ export default function QuestionsPage() {
 
     const updatedAnswers = [...answers, newAnswer];
     setAnswers(updatedAnswers);
-    setCurrentAnswer('');
-    setFinalTranscript('');
-    setInterimTranscript('');
+    resetTranscript();
 
     // Stop current recording segment
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -824,12 +779,12 @@ export default function QuestionsPage() {
           </Box>
 
           {/* User Section - Right Half */}
-          <Box sx={{ ...styles.userSection, ...(isListening && styles.pulsingGlow) }}>
+          <Box sx={{ ...styles.userSection, ...(listening && styles.pulsingGlow) }}>
             <Chip
-              label={isListening ? '● LISTENING' : '● STANDBY'}
+              label={listening ? '● LISTENING' : '● STANDBY'}
               sx={{
                 ...styles.statusChip,
-                backgroundColor: isListening ? '#d32f2f' : '#4a7c59',
+                backgroundColor: listening ? '#d32f2f' : '#4a7c59',
                 color: '#ffffff',
                 fontWeight: 'bold',
               }}
@@ -891,7 +846,7 @@ export default function QuestionsPage() {
             </Box>
 
             {/* User Waveform Visualization */}
-            {isListening && (
+            {listening && (
               <Box sx={styles.waveformContainer}>
                 {userWaveform.map((height, index) => (
                   <Box
