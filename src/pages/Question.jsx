@@ -20,6 +20,7 @@ import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
 import { useParams } from 'react-router-dom';
 import generateQuestions from '../Api/generateQuestions';
+import getNextQuestion from '../Api/getNextQuestion';
 
 const theme = createTheme({
   palette: {
@@ -457,7 +458,7 @@ export default function QuestionsPage() {
     silenceTimerRef.current = setTimeout(() => {
       const timeSinceLastSpeech = Date.now() - lastSpeechTimeRef.current;
       if (timeSinceLastSpeech >= SILENCE_THRESHOLD && finalTranscript.trim()) {
-        console.log('10 seconds of silence detected. Starting countdown...');
+        
         
         // Start countdown from 10 to 0
         let countdown = 10;
@@ -555,7 +556,7 @@ export default function QuestionsPage() {
   };
 
   // Move to next question
-  const moveToNextQuestion = () => {
+  const moveToNextQuestion = async () => {
     const answer = finalTranscript.trim() || '[No response]';
     
     const newAnswer = {
@@ -576,15 +577,45 @@ export default function QuestionsPage() {
       mediaRecorderRef.current.stop();
     }
 
-    if (currentQuestionIndex < questions.length - 1) {
-      setCurrentQuestionIndex(currentQuestionIndex + 1);
-      showAlertMessage('Moving to next question', 'info');
-      
-      // Speak next question after a brief pause
-      setTimeout(() => {
-        speakQuestion();
-      }, 1500);
-    } else {
+    // Fetch next question from API
+    try {
+      const payload = {
+        sessionId: sessionId || id,
+        answer: answer,
+      };
+
+      console.log('Next question payload:', payload);
+
+      const response = await getNextQuestion(payload);
+      console.log('Next question response:', response);
+
+      if (response && response.question) {
+        const transformedQuestion = {
+          id: response.question_number,
+          text: response.question,
+          category: response.difficulty,
+        };
+
+        // Add new question to questions array
+        const updatedQuestions = [...questions, transformedQuestion];
+        setQuestions(updatedQuestions);
+        setCurrentQuestionIndex(currentQuestionIndex + 1);
+        
+        showAlertMessage('Moving to next question', 'info');
+        
+        // Speak next question after a brief pause
+        setTimeout(() => {
+          speakQuestion();
+        }, 1500);
+      } else {
+        // No more questions - interview complete
+        setIsComplete(true);
+        stopListening();
+        showAlertMessage('Interview completed!', 'success');
+      }
+    } catch (err) {
+      console.error('Error fetching next question:', err);
+      // Fallback: complete the interview if API fails
       setIsComplete(true);
       stopListening();
       showAlertMessage('Interview completed!', 'success');
