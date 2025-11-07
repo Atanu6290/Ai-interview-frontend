@@ -3,7 +3,7 @@ import axiosInstance from "../utils/axiosInstance";
 
 const generateQuestions = async (data) => {
   try {
-    const response = await axiosInstance.post('/generate-questions', data);
+    const response = await axiosInstance.post('/start-interview', data);
     return response.data;
     } catch (error) {
     console.error("Error creating JD Link:", error);

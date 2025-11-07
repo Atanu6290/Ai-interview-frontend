@@ -27,6 +27,8 @@ import {
   CheckCircle,
   Download,
   Refresh,
+  Videocam,
+  VideocamOff,
 } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
@@ -105,6 +107,38 @@ const styles = {
     minHeight: '400px',
     gap: 2,
   },
+  videoContainer: {
+    position: 'relative',
+    width: '100%',
+    maxWidth: '640px',
+    margin: '0 auto',
+    backgroundColor: '#000',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+  },
+  video: {
+    width: '100%',
+    height: 'auto',
+    display: 'block',
+  },
+  videoPlaceholder: {
+    padding: '100px 20px',
+    textAlign: 'center',
+    color: '#fff',
+    backgroundColor: '#333',
+  },
+  recordingIndicator: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    animation: 'pulse 1.5s ease-in-out infinite',
+  },
+  cameraStatus: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+  },
 };
 
 export default function QuestionsPage() {
@@ -121,68 +155,117 @@ export default function QuestionsPage() {
   const [isComplete, setIsComplete] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [videoStream, setVideoStream] = useState(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [sessionId, setSessionId] = useState('');
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerRef = useRef(null);
+  const videoRef = useRef(null);
   const { id } = useParams();
 
   console.log("UUID from params:", id);
 
-  // Fetch questions from API on component mount
- useEffect(() => {
-  const fetchQuestions = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      
-      const payload = {
-        uuid: id
-      };
-      
-      console.log("Sending payload to API:", payload);
-      
-      const response = await generateQuestions(payload);
-      
-      console.log("API response:", response);
-      
-      // Transform the API response to match component structure
-      const fetchedQuestions = response.questions || response.data?.questions || [];
-      
-      if (fetchedQuestions && fetchedQuestions.length > 0) {
-        // Map API response to component format
-        const transformedQuestions = fetchedQuestions.map((q) => ({
-          id: q.question_number,
-          text: q.question,
-          category: q.difficulty
-        }));
+  // Initialize camera when component mounts
+  useEffect(() => {
+    const initializeCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: true, 
+          video: { 
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: "user" 
+          } 
+        });
         
-        setQuestions(transformedQuestions);
-      } else {
-        throw new Error('No questions received from API');
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        
+        setVideoStream(stream);
+        setIsCameraActive(true);
+        console.log('Camera initialized successfully');
+      } catch (err) {
+        console.error('Camera initialization error:', err);
+        showAlertMessage(
+          'Could not access camera/microphone. Please allow permissions.',
+          'error'
+        );
       }
-    } catch (err) {
-      console.error('Error fetching questions:', err);
-      setError(err.message || 'Failed to load questions. Please try again.');
-      showAlertMessage(
-        'Failed to load questions. Please refresh the page.',
-        'error'
-      );
-    } finally {
+    };
+
+    initializeCamera();
+
+    // Cleanup function - properly stop camera when component unmounts
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach((track) => {
+          track.stop();
+          console.log('Track stopped:', track.kind);
+        });
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, []); // Empty dependency array - runs once on mount
+
+  // Fetch questions from API on component mount
+  useEffect(() => {
+    const fetchQuestions = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        const payload = {
+          uuid: id
+        };
+        
+        console.log("Sending payload to API:", payload);
+        
+        const response = await generateQuestions(payload);
+        
+        console.log("API response:", response);
+        
+        // Handle single question object from API
+        if (response && response.question) {
+          const transformedQuestion = {
+            id: response.question_number,
+            text: response.question,
+            category: response.difficulty
+          };
+          
+          // Store sessionId for later use
+          if (response.sessionId) {
+            setSessionId(response.sessionId);
+          }
+          
+          // Set as array with single question
+          setQuestions([transformedQuestion]);
+          console.log('Question loaded successfully:', transformedQuestion);
+        } else {
+          throw new Error('No question received from API');
+        }
+      } catch (err) {
+        console.error('Error fetching questions:', err);
+        setError(err.message || 'Failed to load questions. Please try again.');
+        showAlertMessage(
+          'Failed to load questions. Please refresh the page.',
+          'error'
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (id) {
+      fetchQuestions();
+    } else {
+      setError('Invalid interview link. UUID is missing.');
       setIsLoading(false);
     }
-  };
-
-  if (id) {
-    fetchQuestions();
-  } else {
-    setError('Invalid interview link. UUID is missing.');
-    setIsLoading(false);
-  }
-}, [id]);
-
-
-
+  }, [id]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -203,33 +286,150 @@ export default function QuestionsPage() {
     setTimeout(() => setShowAlert(false), 3000);
   };
 
+  // Get supported MIME type for cross-browser compatibility
+  const getSupportedMimeType = () => {
+    const types = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=h264,opus',
+      'video/webm',
+      'video/mp4',
+    ];
+
+    for (const type of types) {
+      if (MediaRecorder.isTypeSupported(type)) {
+        console.log('Supported MIME type:', type);
+        return type;
+      }
+    }
+    return 'video/webm'; // fallback
+  };
+
+  // Upload video to server
+  const uploadVideo = async (videoBlob, questionData) => {
+    try {
+      const formData = new FormData();
+      
+      // Append video file
+      const timestamp = new Date().getTime();
+      formData.append('video', videoBlob, `interview-q${questionData.questionId}-${timestamp}.webm`);
+      
+      // Append metadata
+      formData.append('questionId', questionData.questionId);
+      formData.append('questionText', questionData.question);
+      formData.append('category', questionData.category);
+      formData.append('sessionId', sessionId || id);
+      formData.append('uuid', id);
+      formData.append('timestamp', questionData.timestamp);
+      
+      console.log('Uploading video...', {
+        size: videoBlob.size,
+        type: videoBlob.type,
+        questionId: questionData.questionId
+      });
+      
+      // Replace with your actual upload endpoint
+      const response = await axios.post('/api/upload-interview-video', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total
+          );
+          console.log('Upload progress:', percentCompleted + '%');
+        },
+      });
+      
+      console.log('Video uploaded successfully:', response.data);
+      showAlertMessage('Video uploaded successfully', 'success');
+      return response.data;
+    } catch (err) {
+      console.error('Video upload error:', err);
+      showAlertMessage('Failed to upload video. Will retry...', 'warning');
+      // You might want to implement retry logic here
+      throw err;
+    }
+  };
+
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      if (!videoStream) {
+        showAlertMessage('Camera is not active. Please reload the page.', 'error');
+        return;
+      }
+
+      // Get supported MIME type
+      const mimeType = getSupportedMimeType();
+      
+      // Create MediaRecorder with existing video stream
+      mediaRecorderRef.current = new MediaRecorder(videoStream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 2500000, // 2.5 Mbps for good quality
+      });
+      
       audioChunksRef.current = [];
 
       mediaRecorderRef.current.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+          console.log('Data chunk received:', event.data.size, 'bytes');
+        }
       };
 
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        // You can save or process the audio blob here
-        saveAnswer(currentAnswer || '[Audio Recording Completed]');
+      mediaRecorderRef.current.onstop = async () => {
+        const videoBlob = new Blob(audioChunksRef.current, { 
+          type: mimeType 
+        });
+        
+        console.log('Recording stopped. Video size:', videoBlob.size, 'bytes');
+        
+        // Create download URL for the video (for debugging)
+        const videoUrl = URL.createObjectURL(videoBlob);
+        console.log('Video URL:', videoUrl);
+        
+        // Prepare question data for upload
+        const questionData = {
+          questionId: questions[currentQuestionIndex].id,
+          question: questions[currentQuestionIndex].text,
+          category: questions[currentQuestionIndex].category,
+          timestamp: new Date().toISOString(),
+        };
+        
+        // Upload the video to your server
+        try {
+          await uploadVideo(videoBlob, questionData);
+        } catch (uploadErr) {
+          console.error('Upload failed, but continuing...', uploadErr);
+        }
+        
+        // Save answer after upload attempt
+        saveAnswer(currentAnswer || '[Video Recording Completed]');
+        
+        // Clean up the object URL
+        setTimeout(() => URL.revokeObjectURL(videoUrl), 1000);
       };
 
-      mediaRecorderRef.current.start();
+      mediaRecorderRef.current.onerror = (event) => {
+        console.error('MediaRecorder error:', event);
+        showAlertMessage('Recording error occurred', 'error');
+      };
+
+      // Start recording with timeslice for regular data chunks
+      mediaRecorderRef.current.start(1000); // Get data every second
       setIsRecording(true);
       setRecordingTime(0);
 
       timerRef.current = setInterval(() => {
         setRecordingTime((prev) => prev + 1);
       }, 1000);
+      
+      showAlertMessage('Recording started successfully', 'success');
     } catch (err) {
+      console.error('Recording start error:', err);
       showAlertMessage(
-        'Could not access microphone. Please allow microphone access or type your answer.',
-        'warning'
+        'Could not start recording. Please try again.',
+        'error'
       );
     }
   };
@@ -237,9 +437,11 @@ export default function QuestionsPage() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
       setIsRecording(false);
       clearInterval(timerRef.current);
+      
+      // Camera stays on as required
+      showAlertMessage('Recording stopped. Processing video...', 'info');
     }
   };
 
@@ -250,6 +452,7 @@ export default function QuestionsPage() {
       category: questions[currentQuestionIndex].category,
       answer: answer,
       timestamp: new Date().toISOString(),
+      sessionId: sessionId || id,
     };
 
     const updatedAnswers = [...answers, newAnswer];
@@ -258,8 +461,10 @@ export default function QuestionsPage() {
 
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
+      showAlertMessage('Moving to next question', 'info');
     } else {
       setIsComplete(true);
+      showAlertMessage('Interview completed!', 'success');
     }
   };
 
@@ -287,8 +492,17 @@ export default function QuestionsPage() {
       const speech = new SpeechSynthesisUtterance(
         questions[currentQuestionIndex].text
       );
+      speech.rate = 0.9; // Slightly slower for clarity
+      speech.pitch = 1.0;
+      speech.volume = 1.0;
+      
       speech.onstart = () => setIsSpeaking(true);
       speech.onend = () => setIsSpeaking(false);
+      speech.onerror = (event) => {
+        console.error('Speech synthesis error:', event);
+        setIsSpeaking(false);
+      };
+      
       window.speechSynthesis.speak(speech);
     } else {
       showAlertMessage('Text-to-speech is not supported in your browser', 'warning');
@@ -302,10 +516,10 @@ export default function QuestionsPage() {
     }
   };
 
-
-  
-
   const handleSkipQuestion = () => {
+    if (isRecording) {
+      stopRecording();
+    }
     saveAnswer('[Question Skipped]');
   };
 
@@ -365,13 +579,40 @@ export default function QuestionsPage() {
     );
   }
 
+  // Completion state
+  if (isComplete) {
+    return (
+      <ThemeProvider theme={theme}>
+        <Box sx={styles.container}>
+          <Paper elevation={3} sx={styles.mainCard}>
+            <Box sx={styles.loadingContainer}>
+              <CheckCircle color="success" sx={{ fontSize: 80, mb: 3 }} />
+              <Typography variant="h4" color="primary" gutterBottom>
+                Interview Complete!
+              </Typography>
+              <Typography variant="body1" color="textSecondary" sx={{ mb: 3 }}>
+                Thank you for completing the AI screening round.
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 4 }}>
+                You answered {answers.length} out of {questions.length} questions.
+              </Typography>
+              <Alert severity="success" sx={{ mb: 3, maxWidth: 600 }}>
+                Your responses have been recorded and will be reviewed by our team.
+              </Alert>
+            </Box>
+          </Paper>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
   // Render interview questions
   return (
     <ThemeProvider theme={theme}>
       <Box sx={styles.container}>
         <Paper elevation={3} sx={styles.mainCard}>
           <Typography variant="h4" component="h1" gutterBottom color="primary">
-            AI Interview Questions
+            AI Screening Round
           </Typography>
           <Typography variant="body1" color="textSecondary" sx={{ mb: 4 }}>
             Answer each question thoughtfully. You can type or record your response.
@@ -441,6 +682,52 @@ export default function QuestionsPage() {
               </CardContent>
             </Card>
 
+            {/* Camera Preview - Always Active */}
+            <Box sx={{ mb: 3 }}>
+              <Box sx={styles.videoContainer}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  style={{
+                    ...styles.video,
+                    display: isCameraActive ? 'block' : 'none',
+                  }}
+                />
+                {!isCameraActive && (
+                  <Box sx={styles.videoPlaceholder}>
+                    <VideocamOff sx={{ fontSize: 60, mb: 2, opacity: 0.5 }} />
+                    <Typography variant="body2">
+                      Camera is not active
+                    </Typography>
+                    <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>
+                      Please allow camera permissions and reload
+                    </Typography>
+                  </Box>
+                )}
+                
+                {/* Camera Active Indicator */}
+                {isCameraActive && !isRecording && (
+                  <Chip
+                    label="● Camera Active"
+                    color="success"
+                    size="small"
+                    sx={styles.cameraStatus}
+                  />
+                )}
+                
+                {/* Recording Indicator */}
+                {isRecording && (
+                  <Chip
+                    label={`● REC ${formatTime(recordingTime)}`}
+                    color="error"
+                    sx={styles.recordingIndicator}
+                  />
+                )}
+              </Box>
+            </Box>
+
             <TextField
               fullWidth
               multiline
@@ -464,6 +751,7 @@ export default function QuestionsPage() {
                   onClick={isRecording ? stopRecording : startRecording}
                   startIcon={isRecording ? <Stop /> : <Mic />}
                   sx={styles.recordingButton}
+                  disabled={!isCameraActive}
                 >
                   {isRecording
                     ? `Stop Recording (${formatTime(recordingTime)})`
@@ -501,6 +789,13 @@ export default function QuestionsPage() {
           </Box>
         </Paper>
       </Box>
+
+      <style jsx>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      `}</style>
     </ThemeProvider>
   );
 }
