@@ -8,9 +8,15 @@ import {
   Card,
   CardContent,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
 } from '@mui/material';
-import { CloudUpload } from '@mui/icons-material';
+import { CloudUpload, ContentCopy, Close } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
+import createJDLink from "../Api/createJDLink";
 
 const theme = createTheme({
   palette: {
@@ -67,6 +73,9 @@ export default function JobPage() {
   const [selectedFileName, setSelectedFileName] = useState('');
   const [isUploaded, setIsUploaded] = useState(false);
   const [submittedData, setSubmittedData] = useState(null);
+  const [openDialog, setOpenDialog] = useState(false);
+  const [testLink, setTestLink] = useState('');
+  const [copySuccess, setCopySuccess] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFileUpload = (e) => {
@@ -122,19 +131,43 @@ export default function JobPage() {
     setTimeout(() => setShowAlert(false), 3000);
   };
 
-  const handleSubmit = () => {
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(testLink);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
+
+  const handleCloseDialog = () => {
+    setOpenDialog(false);
+    setCopySuccess(false);
+    setTestLink('');
+  };
+
+  const handleSubmit = async () => {
     if (!jobDescription && !selectedFileName) {
       showAlertMessage('Please upload a file or enter job description');
       return;
     }
 
     const data = {
-      
-      id: jobDescription,
+      jd: jobDescription,
     };
     console.log('Full Submitted Data:', data);
-
-    setSubmittedData(data);
+    
+    try {
+      const response = await createJDLink(data);
+      console.log('Response from createJDLink:', response);
+      
+      // Set the test link and open dialog
+      setTestLink(response.link);
+      setOpenDialog(true);
+      setSubmittedData(data);
+      setJobDescription('');
+      handleRemoveFile();
+    } catch (error) {
+      console.error('Error calling createJDLink:', error);
+      showAlertMessage('Failed to create test link. Please try again.');
+    }
   };
 
   return (
@@ -224,9 +257,54 @@ export default function JobPage() {
             >
               Submit
             </Button>
-
           </Box>
         </Paper>
+
+        {/* Dialog for displaying test link */}
+        <Dialog 
+          open={openDialog} 
+          onClose={handleCloseDialog}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6">Your Test Link</Typography>
+              <IconButton onClick={handleCloseDialog} size="small">
+                <Close />
+              </IconButton>
+            </Box>
+          </DialogTitle>
+          <DialogContent>
+            <TextField
+              fullWidth
+              value={testLink}
+              variant="outlined"
+              InputProps={{
+                readOnly: true,
+              }}
+              sx={{ mb: 2 }}
+            />
+            {copySuccess && (
+              <Alert severity="success" sx={{ mt: 1 }}>
+                Link copied to clipboard!
+              </Alert>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button
+              variant="contained"
+              startIcon={<ContentCopy />}
+              onClick={handleCopyLink}
+              color="primary"
+            >
+              Copy Link
+            </Button>
+            <Button onClick={handleCloseDialog} variant="outlined">
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     </ThemeProvider>
   );

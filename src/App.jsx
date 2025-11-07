@@ -25,7 +25,7 @@ export default function App() {
       <Box sx={{ mt: 2 }}>
         <Routes>
           <Route path="/" element={<JobPage />} />
-          <Route path="/questions" element={<QuestionPage />} />
+          <Route path="/questions/:id" element={<QuestionPage />} />
 
         </Routes>
       </Box>
