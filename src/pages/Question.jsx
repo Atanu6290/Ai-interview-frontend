@@ -147,6 +147,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: '100vh',
+    minWidth: '100vw',
     gap: 2,
     background: '#ECF4E8',
   },
