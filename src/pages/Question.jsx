@@ -22,6 +22,7 @@ import { useParams } from 'react-router-dom';
 import generateQuestions from '../Api/generateQuestions';
 import getNextQuestion from '../Api/getNextQuestion';
 
+
 const theme = createTheme({
   palette: {
     primary: {
@@ -46,6 +47,7 @@ const theme = createTheme({
     },
   },
 });
+
 
 const styles = {
   container: {
@@ -153,6 +155,7 @@ const styles = {
   },
 };
 
+
 export default function QuestionsPage() {
   const {
     interimTranscript,
@@ -179,6 +182,10 @@ export default function QuestionsPage() {
   const [userWaveform, setUserWaveform] = useState([]);
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [silenceCountdown, setSilenceCountdown] = useState(null);
+  
+  // Timer states
+  const [timeRemaining, setTimeRemaining] = useState(15 * 60); // 15 minutes in seconds
+  const [isTimerActive, setIsTimerActive] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -189,9 +196,81 @@ export default function QuestionsPage() {
   const lastSpeechTimeRef = useRef(Date.now());
   const listeningRef = useRef(false);
   const countdownIntervalRef = useRef(null);
+  const timerIntervalRef = useRef(null);
   const { id } = useParams();
 
   const SILENCE_THRESHOLD = 10000; // 10 seconds
+
+  // Format time as MM:SS
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Handle timer expiry
+  const handleTimerExpiry = () => {
+    console.log('Timer expired - stopping interview');
+    
+    // Stop timer
+    setIsTimerActive(false);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    
+    // Stop speech recognition
+    stopListening();
+    
+    // Stop recording
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    
+    // Stop camera
+    if (videoStream) {
+      videoStream.getTracks().forEach((track) => track.stop());
+    }
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach((track) => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraActive(false);
+    setIsRecordingVideo(false);
+    
+    // Stop TTS
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+    
+    // Mark as complete
+    setIsComplete(true);
+    showAlertMessage('Time expired! Interview completed.', 'warning');
+  };
+
+  // Timer countdown effect
+  useEffect(() => {
+    if (isTimerActive && timeRemaining > 0) {
+      timerIntervalRef.current = setInterval(() => {
+        setTimeRemaining((prev) => {
+          if (prev <= 1) {
+            // Timer expired
+            handleTimerExpiry();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => {
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current);
+        }
+      };
+    }
+  }, [isTimerActive]);
 
   // Initialize camera and recording when component mounts
   useEffect(() => {
@@ -233,6 +312,9 @@ export default function QuestionsPage() {
 
     return () => {
       // Cleanup
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
       if (videoRef.current && videoRef.current.srcObject) {
         const tracks = videoRef.current.srcObject.getTracks();
         tracks.forEach((track) => track.stop());
@@ -286,8 +368,8 @@ export default function QuestionsPage() {
         //   console.error('Upload failed:', uploadErr);
         // }
 
-        // Restart recording for next question if not complete
-        if (!isComplete && videoStream) {
+        // Restart recording for next question if not complete and timer not expired
+        if (!isComplete && videoStream && timeRemaining > 0) {
           audioChunksRef.current = [];
           mediaRecorderRef.current.start(1000);
         }
@@ -391,13 +473,16 @@ export default function QuestionsPage() {
   }, [id]);
 
   // Auto-start question reading when questions are loaded
- useEffect(() => {
-  if (questions.length > 0 && !isLoading && isCameraActive) {
-    setTimeout(() => {
-      speakQuestion(questions[0].text); // Pass the first question text
-    }, 1000);
-  }
-}, [questions, isLoading, isCameraActive]);
+  useEffect(() => {
+    if (questions.length > 0 && !isLoading && isCameraActive) {
+      // Start timer
+      setIsTimerActive(true);
+      
+      setTimeout(() => {
+        speakQuestion(questions[0].text);
+      }, 1000);
+    }
+  }, [questions, isLoading, isCameraActive]);
 
   // Check browser support
   useEffect(() => {
@@ -459,7 +544,6 @@ export default function QuestionsPage() {
       const timeSinceLastSpeech = Date.now() - lastSpeechTimeRef.current;
       if (timeSinceLastSpeech >= SILENCE_THRESHOLD && finalTranscript.trim()) {
         
-        
         // Start countdown from 10 to 0
         let countdown = 10;
         setSilenceCountdown(countdown);
@@ -481,47 +565,46 @@ export default function QuestionsPage() {
 
   // Speak question using TTS
   const speakQuestion = (questionText) => {
-  if (!questionText) return;
+    if (!questionText) return;
 
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
 
-    const speech = new SpeechSynthesisUtterance(questionText);
-    speech.rate = 0.9;
-    speech.pitch = 1.0;
-    speech.volume = 1.0;
+      const speech = new SpeechSynthesisUtterance(questionText);
+      speech.rate = 0.9;
+      speech.pitch = 1.0;
+      speech.volume = 1.0;
 
-    speech.onstart = () => {
-      setIsSpeaking(true);
-      console.log('AI started speaking');
-    };
+      speech.onstart = () => {
+        setIsSpeaking(true);
+        console.log('AI started speaking');
+      };
 
-    speech.onend = () => {
-      setIsSpeaking(false);
-      console.log('AI finished speaking');
-      
-      setTimeout(() => {
+      speech.onend = () => {
+        setIsSpeaking(false);
+        console.log('AI finished speaking');
+        
+        setTimeout(() => {
+          startListening();
+        }, 500);
+      };
+
+      speech.onerror = (event) => {
+        console.error('Speech synthesis error:', event);
+        setIsSpeaking(false);
         startListening();
-      }, 500);
-    };
+      };
 
-    speech.onerror = (event) => {
-      console.error('Speech synthesis error:', event);
-      setIsSpeaking(false);
+      window.speechSynthesis.speak(speech);
+    } else {
+      showAlertMessage('Text-to-speech not supported', 'warning');
       startListening();
-    };
-
-    window.speechSynthesis.speak(speech);
-  } else {
-    showAlertMessage('Text-to-speech not supported', 'warning');
-    startListening();
-  }
-};
-
+    }
+  };
 
   // Start listening for user answer (using react-speech-recognition)
   const startListening = () => {
-    if (!listening) {
+    if (!listening && timeRemaining > 0) {
       try {
         resetTranscript();
         lastSpeechTimeRef.current = Date.now();
@@ -556,6 +639,12 @@ export default function QuestionsPage() {
 
   // Move to next question
   const moveToNextQuestion = async () => {
+    // Check if timer expired
+    if (timeRemaining <= 0) {
+      handleTimerExpiry();
+      return;
+    }
+
     const answer = finalTranscript.trim() || '[No response]';
     
     const newAnswer = {
@@ -733,11 +822,18 @@ export default function QuestionsPage() {
             Interview Complete!
           </Typography>
           <Typography variant="body1" sx={{ color: '#4a7c59', mb: 3 }}>
-            Thank you for completing the AI screening round.
+            {timeRemaining <= 0 
+              ? 'Time limit reached. Thank you for your participation.'
+              : 'Thank you for completing the AI screening round.'}
           </Typography>
-          <Alert severity="success" sx={{ maxWidth: 600 }}>
+          <Alert severity={timeRemaining <= 0 ? 'warning' : 'success'} sx={{ maxWidth: 600 }}>
             Your responses have been recorded and will be reviewed by our team.
           </Alert>
+          {timeRemaining > 0 && (
+            <Typography variant="body2" sx={{ color: '#4a7c59', mt: 2 }}>
+              Time used: {formatTime(15 * 60 - timeRemaining)} / 15:00
+            </Typography>
+          )}
         </Box>
       </ThemeProvider>
     );
@@ -868,6 +964,47 @@ export default function QuestionsPage() {
                 fontWeight: 'bold',
               }}
             />
+
+            {/* Timer Display */}
+            <Box
+              sx={{
+                position: 'absolute',
+                top: '80px',
+                right: '20px',
+                backgroundColor: timeRemaining < 60 ? 'rgba(211, 47, 47, 0.9)' : 'rgba(74, 124, 89, 0.9)',
+                borderRadius: '8px',
+                padding: '12px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                zIndex: 1000,
+                minWidth: '120px',
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  color: '#ffffff',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  mb: 0.5,
+                }}
+              >
+                TIME REMAINING
+              </Typography>
+              <Typography
+                variant="h4"
+                sx={{
+                  color: '#ffffff',
+                  fontWeight: 'bold',
+                  fontFamily: 'monospace',
+                  fontSize: '1.8rem',
+                }}
+              >
+                {formatTime(timeRemaining)}
+              </Typography>
+            </Box>
 
             <Typography
               variant="h3"
