@@ -15,6 +15,9 @@ import {
   Videocam,
   Mic,
   CheckCircle,
+  MicOff,
+  VolumeUp,
+  Warning,
 } from '@mui/icons-material';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import axios from 'axios';
@@ -183,6 +186,14 @@ export default function QuestionsPage() {
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [silenceCountdown, setSilenceCountdown] = useState(null);
   
+  // WebSocket and Audio states
+  const [wsConnected, setWsConnected] = useState(false);
+  const [isAISpeaking, setIsAISpeaking] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [userTranscript, setUserTranscript] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [isMicOn, setIsMicOn] = useState(false);
+  
   // Timer states
   const [timeRemaining, setTimeRemaining] = useState(15 * 60); // 15 minutes in seconds
   const [isTimerActive, setIsTimerActive] = useState(false);
@@ -197,9 +208,352 @@ export default function QuestionsPage() {
   const listeningRef = useRef(false);
   const countdownIntervalRef = useRef(null);
   const timerIntervalRef = useRef(null);
+  
+  // WebSocket and Audio refs
+  const wsRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
+  const micStateRef = useRef(false);
+  const lastTranscriptRef = useRef('');
+  const speechRecognitionRef = useRef(null);
+  const processorRef = useRef(null);
+  
   const { id } = useParams();
 
   const SILENCE_THRESHOLD = 10000; // 10 seconds
+  
+  // WebSocket and Audio constants
+  const API_BASE_URL = 'http://localhost:8000';
+  const WS_BASE_URL = 'ws://localhost:8000';
+  const TARGET_SAMPLE_RATE = 24000;
+
+  // WebSocket and Audio Helper Functions
+  const arrayBufferToBase64 = (buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  };
+
+  const base64ToArrayBuffer = (base64) => {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+  };
+
+  const pcmToAudioBuffer = (pcmData, sampleRate, channels) => {
+    const numSamples = pcmData.byteLength / 2;
+    const audioBuffer = audioContextRef.current.createBuffer(channels, numSamples, sampleRate);
+    const channelData = audioBuffer.getChannelData(0);
+    const dataView = new DataView(pcmData);
+
+    for (let i = 0; i < numSamples; i++) {
+      const int16 = dataView.getInt16(i * 2, true);
+      channelData[i] = int16 / 32768.0;
+    }
+
+    return audioBuffer;
+  };
+
+  const downsampleBuffer = (buffer, fromSampleRate, toSampleRate) => {
+    if (fromSampleRate === toSampleRate) {
+      return buffer;
+    }
+
+    const sampleRateRatio = fromSampleRate / toSampleRate;
+    const newLength = Math.round(buffer.length / sampleRateRatio);
+    const result = new Float32Array(newLength);
+
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+
+    while (offsetResult < result.length) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      let accum = 0;
+      let count = 0;
+
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+        accum += buffer[i];
+        count++;
+      }
+
+      result[offsetResult] = count > 0 ? accum / count : 0;
+      offsetResult++;
+      offsetBuffer = nextOffsetBuffer;
+    }
+
+    return result;
+  };
+
+  // Handle WebSocket messages
+  const handleMessage = (data) => {
+    if (data.type === 'audio') {
+      const audioBytes = base64ToArrayBuffer(data.data);
+      audioQueueRef.current.push(audioBytes);
+      processAudioQueue();
+    } else if (data.type === 'info') {
+      if (data.message) {
+        setMessages((prev) => [...prev, { type: 'ai', text: data.message }]);
+        // Update the current question text with AI response
+        if (questions[currentQuestionIndex]) {
+          const updatedQuestions = [...questions];
+          updatedQuestions[currentQuestionIndex] = {
+            ...updatedQuestions[currentQuestionIndex],
+            text: data.message
+          };
+          setQuestions(updatedQuestions);
+        }
+      }
+    }
+  };
+
+  // Process audio queue
+  const processAudioQueue = async () => {
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+
+    isPlayingRef.current = true;
+
+    while (audioQueueRef.current.length > 0) {
+      const audioData = audioQueueRef.current.shift();
+      await playAudio(audioData);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    isPlayingRef.current = false;
+  };
+
+  // Play audio
+  const playAudio = (pcmData) => {
+    return new Promise((resolve) => {
+      try {
+        setIsAISpeaking(true);
+        setIsSpeaking(true);
+
+        const audioBuffer = pcmToAudioBuffer(pcmData, 24000, 1);
+        const source = audioContextRef.current.createBufferSource();
+        const gainNode = audioContextRef.current.createGain();
+
+        source.buffer = audioBuffer;
+        gainNode.gain.value = 0.8;
+
+        source.connect(gainNode);
+        gainNode.connect(audioContextRef.current.destination);
+
+        // Resume context if needed
+        if (audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume();
+        }
+
+        let timeoutId;
+        source.onended = () => {
+          clearTimeout(timeoutId);
+          setIsAISpeaking(false);
+          setIsSpeaking(false);
+          resolve();
+        };
+
+        source.start(0);
+        
+        // Fallback timeout in case onended doesn't fire
+        const duration = audioBuffer.duration;
+        timeoutId = setTimeout(() => {
+          setIsAISpeaking(false);
+          setIsSpeaking(false);
+          resolve();
+        }, (duration * 1000) + 100);
+      } catch (err) {
+        console.error('Playback error:', err);
+        setIsAISpeaking(false);
+        setIsSpeaking(false);
+        resolve();
+      }
+    });
+  };
+
+  // Initialize WebSocket connection
+  const initializeWebSocket = async () => {
+    try {
+      // Start audio session
+      const res = await axios.post(`${API_BASE_URL}/start-audio-stream`, { uuid: id });
+      const newSessionId = res.data.sessionId || res.data.session_id;
+
+      if (!newSessionId) throw new Error('No session ID from server');
+
+      setSessionId(newSessionId);
+
+      // Connect WebSocket
+      const ws = new WebSocket(`${WS_BASE_URL}/ws/audio-stream/${newSessionId}`);
+
+      ws.onopen = () => {
+        setWsConnected(true);
+        showAlertMessage('Connected to AI Interviewer', 'success');
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          handleMessage(data);
+        } catch (err) {
+          console.error('Message parse error:', err);
+        }
+      };
+
+      ws.onerror = () => showAlertMessage('WebSocket connection error', 'error');
+      ws.onclose = () => setWsConnected(false);
+
+      wsRef.current = ws;
+    } catch (err) {
+      console.error('WebSocket initialization error:', err);
+      showAlertMessage('Failed to connect to AI service', 'error');
+    }
+  };
+
+  // Start audio capture for WebSocket
+  const startAudioCapture = (stream) => {
+    if (!audioContextRef.current) return;
+    
+    const source = audioContextRef.current.createMediaStreamSource(stream);
+    const processor = audioContextRef.current.createScriptProcessor(2048, 1, 1);
+
+    processorRef.current = processor;
+
+    processor.onaudioprocess = (e) => {
+      if (isPlayingRef.current) return;
+      if (!micStateRef.current) return;
+      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+
+      const inputSampleRate = e.inputBuffer.sampleRate;
+      let inputData = e.inputBuffer.getChannelData(0);
+
+      if (inputSampleRate !== TARGET_SAMPLE_RATE) {
+        inputData = downsampleBuffer(inputData, inputSampleRate, TARGET_SAMPLE_RATE);
+      }
+
+      const pcmData = new Int16Array(inputData.length);
+
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+
+      const base64 = arrayBufferToBase64(pcmData.buffer);
+
+      if (!base64) {
+        return;
+      }
+
+      const payload = {
+        type: 'audio',
+        encoding: 'base64',
+        format: 'pcm16',
+        sampleRate: TARGET_SAMPLE_RATE,
+        data: base64,
+        chunk: base64,
+      };
+
+      wsRef.current.send(JSON.stringify(payload));
+    };
+
+    source.connect(processor);
+  };
+
+  // Initialize speech recognition for WebSocket mode
+  const initializeSpeechRecognition = () => {
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      console.warn('Speech Recognition API not supported');
+      return;
+    }
+
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.language = 'en-US';
+
+    let finalTranscript = '';
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      finalTranscript = '';
+    };
+
+    recognition.onresult = (event) => {
+      let interimTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' ';
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      // Update user transcript state with final transcript
+      if (finalTranscript && finalTranscript !== lastTranscriptRef.current) {
+        lastTranscriptRef.current = finalTranscript;
+        setMessages((prev) => {
+          // Check if last message is a user message to update it, or add new one
+          if (prev.length > 0 && prev[prev.length - 1].type === 'user' && prev[prev.length - 1].isIncomplete) {
+            const updated = [...prev];
+            updated[updated.length - 1] = { type: 'user', text: finalTranscript.trim(), isIncomplete: false };
+            return updated;
+          } else {
+            return [...prev, { type: 'user', text: finalTranscript.trim(), isIncomplete: false }];
+          }
+        });
+      }
+
+      // Show interim results
+      if (interimTranscript && !finalTranscript) {
+        setUserTranscript(interimTranscript);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      finalTranscript = '';
+      setUserTranscript('');
+    };
+
+    speechRecognitionRef.current = recognition;
+    
+    return recognition;
+  };
+
+  // Sync mic toggle with processor
+  useEffect(() => {
+    micStateRef.current = isMicOn;
+  }, [isMicOn]);
+
+  // Handle mic toggle for speech recognition
+  useEffect(() => {
+    if (!speechRecognitionRef.current) return;
+
+    if (isMicOn) {
+      try {
+        speechRecognitionRef.current.start();
+      } catch {
+        console.log('Speech recognition already started');
+      }
+    } else {
+      try {
+        speechRecognitionRef.current.stop();
+      } catch {
+        console.log('Speech recognition already stopped');
+      }
+    }
+  }, [isMicOn]);
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
@@ -221,6 +575,9 @@ export default function QuestionsPage() {
     
     // Stop speech recognition
     stopListening();
+    
+    // Stop WebSocket microphone
+    setIsMicOn(false);
     
     // Stop recording
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -244,10 +601,16 @@ export default function QuestionsPage() {
       window.speechSynthesis.cancel();
     }
     setIsSpeaking(false);
+    setIsAISpeaking(false);
     
-    // Mark as complete
-    setIsComplete(true);
-    showAlertMessage('Time expired! Interview completed.', 'warning');
+    // End WebSocket session if connected
+    if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
+      endInterviewWebSocket();
+    } else {
+      // Mark as complete for traditional mode
+      setIsComplete(true);
+      showAlertMessage('Time expired! Interview completed.', 'warning');
+    }
   };
 
   // Timer countdown effect
@@ -295,14 +658,36 @@ export default function QuestionsPage() {
         // Start continuous video recording
         startContinuousRecording(stream);
         
-        // Initialize audio context for visualization
+        // Initialize audio context for visualization and WebSocket
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: 24000,
+          latencyHint: 'interactive',
+        });
+
+        if (audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume();
+        }
+
+        // Initialize audio visualization
         initializeAudioVisualization(stream);
         
-        console.log('Camera and recording initialized successfully');
+        // Initialize WebSocket connection
+        await initializeWebSocket();
+        
+        // Initialize speech recognition for WebSocket mode
+        initializeSpeechRecognition();
+        
+        // Start audio capture for WebSocket
+        startAudioCapture(stream);
+        
+        // Enable microphone by default
+        setIsMicOn(true);
+        
+        console.log('Camera, WebSocket, and recording initialized successfully');
       } catch (err) {
-        console.error('Camera initialization error:', err);
+        console.error('Camera/WebSocket initialization error:', err);
         showAlertMessage(
-          'Could not access camera/microphone. Please allow permissions.',
+          'Could not access camera/microphone or connect to AI service. Please allow permissions.',
           'error'
         );
       }
@@ -325,6 +710,15 @@ export default function QuestionsPage() {
       }
       if (audioContextRef.current) {
         audioContextRef.current.close();
+      }
+      if (processorRef.current) {
+        processorRef.current.disconnect();
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
       }
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
@@ -479,10 +873,21 @@ export default function QuestionsPage() {
       setIsTimerActive(true);
       
       setTimeout(() => {
-        speakQuestion(questions[0].text);
+        // Use WebSocket if connected, otherwise fallback to TTS
+        if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
+          // Send initial message to start WebSocket interview
+          const payload = {
+            type: 'start',
+            message: 'Begin interview session',
+          };
+          wsRef.current.send(JSON.stringify(payload));
+        } else {
+          // Fallback to traditional TTS
+          speakQuestion(questions[0].text);
+        }
       }, 1000);
     }
-  }, [questions, isLoading, isCameraActive]);
+  }, [questions, isLoading, isCameraActive, wsConnected]);
 
   // Check browser support
   useEffect(() => {
@@ -563,10 +968,20 @@ export default function QuestionsPage() {
     }, SILENCE_THRESHOLD);
   };
 
-  // Speak question using TTS
+  // Speak question using TTS or WebSocket
   const speakQuestion = (questionText) => {
     if (!questionText) return;
 
+    // If WebSocket is connected, rely on WebSocket audio
+    if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
+      // WebSocket will handle audio automatically
+      setTimeout(() => {
+        startListening();
+      }, 2000); // Give some time for WebSocket audio to start
+      return;
+    }
+
+    // Fallback to TTS
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
 
@@ -602,9 +1017,19 @@ export default function QuestionsPage() {
     }
   };
 
-  // Start listening for user answer (using react-speech-recognition)
+  // Start listening for user answer (using react-speech-recognition or WebSocket)
   const startListening = () => {
-    if (!listening && timeRemaining > 0) {
+    if (timeRemaining <= 0) return;
+
+    // If WebSocket is connected, enable microphone for real-time audio
+    if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
+      setIsMicOn(true);
+      showAlertMessage('Listening via WebSocket... Speak your answer', 'info');
+      return;
+    }
+
+    // Fallback to react-speech-recognition
+    if (!listening) {
       try {
         resetTranscript();
         lastSpeechTimeRef.current = Date.now();
@@ -645,7 +1070,17 @@ export default function QuestionsPage() {
       return;
     }
 
-    const answer = finalTranscript.trim() || '[No response]';
+    let answer;
+    
+    // Get answer from appropriate source
+    if (wsConnected && messages.length > 0) {
+      // Get the last user message from WebSocket
+      const lastUserMessage = messages.filter(msg => msg.type === 'user').pop();
+      answer = lastUserMessage?.text?.trim() || '[No response]';
+    } else {
+      // Use traditional speech recognition transcript
+      answer = finalTranscript.trim() || '[No response]';
+    }
     
     const newAnswer = {
       questionId: questions[currentQuestionIndex].id,
@@ -665,7 +1100,19 @@ export default function QuestionsPage() {
       mediaRecorderRef.current.stop();
     }
 
-    // Fetch next question from API
+    // If using WebSocket, send next question request via WebSocket
+    if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
+      const payload = {
+        type: 'next',
+        answer: answer,
+        sessionId: sessionId || id,
+      };
+      wsRef.current.send(JSON.stringify(payload));
+      showAlertMessage('Processing your answer...', 'info');
+      return;
+    }
+
+    // Fallback to traditional API approach
     try {
       const payload = {
         sessionId: sessionId || id,
@@ -736,7 +1183,6 @@ export default function QuestionsPage() {
   //   }
   // };
 
-  // Get supported MIME type
   const getSupportedMimeType = () => {
     const types = [
       'video/webm;codecs=vp9,opus',
@@ -752,6 +1198,26 @@ export default function QuestionsPage() {
       }
     }
     return 'video/webm';
+  };
+
+  // End interview function for WebSocket mode
+  const endInterviewWebSocket = async () => {
+    try {
+      audioQueueRef.current = [];
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'end' }));
+        wsRef.current.close();
+      }
+      if (sessionId) {
+        await axios.post(`${API_BASE_URL}/end-audio-stream/${sessionId}`);
+      }
+      setIsComplete(true);
+      showAlertMessage('Interview completed!', 'success');
+    } catch (err) {
+      console.error('End interview error:', err);
+      setIsComplete(true);
+      showAlertMessage('Interview completed!', 'success');
+    }
   };
 
   const showAlertMessage = (message, severity = 'warning') => {
@@ -863,10 +1329,10 @@ export default function QuestionsPage() {
           {/* AI Section - Left Half */}
           <Box sx={{ ...styles.aiSection, ...(isSpeaking && styles.pulsingGlow) }}>
             <Chip
-              label="● AI INTERVIEWER"
+              label={wsConnected ? "● AI INTERVIEWER (WebSocket)" : "● AI INTERVIEWER"}
               sx={{
                 ...styles.statusChip,
-                backgroundColor: '#4a7c59',
+                backgroundColor: wsConnected ? '#667eea' : '#4a7c59',
                 color: '#ffffff',
                 fontWeight: 'bold',
               }}
@@ -933,12 +1399,24 @@ export default function QuestionsPage() {
                 />
               )}
               <Typography variant="h6" sx={{ color: '#2d5a3d', lineHeight: 1.6 }}>
-                {questions[currentQuestionIndex]?.text}
+                {/* Show the latest AI message if WebSocket is connected, otherwise show traditional question */}
+                {wsConnected && messages.length > 0 
+                  ? messages.filter(msg => msg.type === 'ai').pop()?.text || questions[currentQuestionIndex]?.text
+                  : questions[currentQuestionIndex]?.text
+                }
               </Typography>
+              {wsConnected && (
+                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <VolumeUp sx={{ fontSize: 16, color: '#4a7c59' }} />
+                  <Typography variant="caption" sx={{ color: '#4a7c59' }}>
+                    {isAISpeaking ? 'AI Speaking...' : 'Ready to listen'}
+                  </Typography>
+                </Box>
+              )}
             </Box>
 
             {/* AI Waveform Visualization */}
-            {isSpeaking && (
+            {(isSpeaking || isAISpeaking) && (
               <Box sx={styles.waveformContainer}>
                 {aiWaveform.map((height, index) => (
                   <Box
@@ -956,10 +1434,13 @@ export default function QuestionsPage() {
           {/* User Section - Right Half */}
           <Box sx={{ ...styles.userSection, ...(listening && styles.pulsingGlow) }}>
             <Chip
-              label={listening ? '● LISTENING' : '● STANDBY'}
+              label={wsConnected 
+                ? (isMicOn ? '● LISTENING (WebSocket)' : '● MICROPHONE OFF') 
+                : (listening ? '● LISTENING' : '● STANDBY')
+              }
               sx={{
                 ...styles.statusChip,
-                backgroundColor: listening ? '#d32f2f' : '#4a7c59',
+                backgroundColor: (wsConnected ? isMicOn : listening) ? '#d32f2f' : '#4a7c59',
                 color: '#ffffff',
                 fontWeight: 'bold',
               }}
@@ -1047,18 +1528,65 @@ export default function QuestionsPage() {
                 Your Answer:
               </Typography>
               <Typography variant="body1" sx={{ color: '#2d5a3d', lineHeight: 1.8 }}>
-                {finalTranscript}
-                {interimTranscript && (
-                  <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
-                    {interimTranscript}
-                  </span>
-                )}
-                {!finalTranscript && !interimTranscript && (
-                  <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
-                    Start speaking your answer...
-                  </span>
+                {wsConnected ? (
+                  // Show WebSocket conversation
+                  <>
+                    {messages.filter(msg => msg.type === 'user').map((msg, idx) => (
+                      <div key={idx} style={{ marginBottom: '8px' }}>
+                        {msg.text}
+                      </div>
+                    ))}
+                    {userTranscript && (
+                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
+                        {userTranscript}
+                      </span>
+                    )}
+                    {messages.filter(msg => msg.type === 'user').length === 0 && !userTranscript && (
+                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
+                        {isMicOn ? 'Start speaking your answer...' : 'Turn on microphone to speak'}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  // Show traditional speech recognition
+                  <>
+                    {finalTranscript}
+                    {interimTranscript && (
+                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
+                        {interimTranscript}
+                      </span>
+                    )}
+                    {!finalTranscript && !interimTranscript && (
+                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
+                        Start speaking your answer...
+                      </span>
+                    )}
+                  </>
                 )}
               </Typography>
+              
+              {/* WebSocket microphone control */}
+              {wsConnected && (
+                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={() => setIsMicOn(!isMicOn)}
+                    startIcon={isMicOn ? <Mic /> : <MicOff />}
+                    sx={{
+                      backgroundColor: isMicOn ? '#4a7c59' : '#d32f2f',
+                      '&:hover': {
+                        backgroundColor: isMicOn ? '#2d5a3d' : '#b71c1c',
+                      },
+                    }}
+                  >
+                    {isMicOn ? 'Mute' : 'Unmute'}
+                  </Button>
+                  <Typography variant="caption" sx={{ color: '#4a7c59' }}>
+                    {isListening ? 'Speech recognition active' : 'Waiting for speech'}
+                  </Typography>
+                </Box>
+              )}
             </Box>
 
             {/* Silence Countdown Timer */}
@@ -1101,7 +1629,7 @@ export default function QuestionsPage() {
             )}
 
             {/* User Waveform Visualization */}
-            {listening && (
+            {(listening || (wsConnected && isMicOn)) && (
               <Box sx={styles.waveformContainer}>
                 {userWaveform.map((height, index) => (
                   <Box
@@ -1131,6 +1659,29 @@ export default function QuestionsPage() {
                 }}
               />
             </Box>
+
+            {/* WebSocket Controls */}
+            {wsConnected && (
+              <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={endInterviewWebSocket}
+                  sx={{ borderRadius: '20px' }}
+                >
+                  End Interview
+                </Button>
+                <Typography variant="caption" sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  color: wsConnected ? '#4a7c59' : '#d32f2f',
+                  gap: 0.5
+                }}>
+                  {wsConnected ? '🟢' : '🔴'} WebSocket {wsConnected ? 'Connected' : 'Disconnected'}
+                </Typography>
+              </Box>
+            )}
           </Box>
         </Box>
       </Box>
