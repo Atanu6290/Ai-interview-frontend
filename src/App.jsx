@@ -3,7 +3,8 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
 import Home from './pages/Home';
 import JobPage from './pages/JobPage';
-import QuestionPage from './pages/Question';
+
+import QuestionsPage from './pages/Question_WebSocket';
 
 export default function App() {
   return (
@@ -12,7 +13,7 @@ export default function App() {
       <Box sx={{ mt: 2 }}>
         <Routes>
           <Route path="/" element={<JobPage />} />
-          <Route path="/questions/:id" element={<QuestionPage />} />
+          <Route path="/questions/:id" element={<QuestionsPage />} />
 
         </Routes>
       </Box>
