@@ -179,6 +179,8 @@ export default function QuestionsPage() {
   
   // WebSocket and Audio states
   const [wsConnected, setWsConnected] = useState(false);
+  const [sessionInitialized, setSessionInitialized] = useState(false);
+  const [audioStreamReady, setAudioStreamReady] = useState(false);
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [messages, setMessages] = useState([]);
   const [userTranscript, setUserTranscript] = useState('');
@@ -186,7 +188,7 @@ export default function QuestionsPage() {
   const [isMicOn, setIsMicOn] = useState(false);
   
   // Timer states
-  const [timeRemaining, setTimeRemaining] = useState(15 * 60); // 15 minutes in seconds
+  const [timeRemaining, setTimeRemaining] = useState(15 * 60);
   const [isTimerActive, setIsTimerActive] = useState(false);
 
   const mediaRecorderRef = useRef(null);
@@ -202,21 +204,20 @@ export default function QuestionsPage() {
   const lastTranscriptRef = useRef('');
   const speechRecognitionRef = useRef(null);
   const processorRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const isPlayingAudioRef = useRef(false);
+  const audioStreamReadyRef = useRef(false);
   
   const { id } = useParams();
 
-  const SILENCE_THRESHOLD = 10000; // 10 seconds
+  const SILENCE_THRESHOLD = 10000;
   
   // WebSocket and Audio constants
   const API_BASE_URL = 'http://localhost:8000';
   const WS_BASE_URL = 'ws://localhost:8000';
-  const TARGET_SAMPLE_RATE = 16000; // Bedrock expected input sampleRateHertz for audio/lpcm (16 kHz mono 16-bit)
-  const PROMPT_NAME = 'INTERVIEW_PROMPT';
-  const CONTENT_NAME = 'USER_AUDIO_STREAM';
-  const promptNameRef = useRef(PROMPT_NAME);
-  const contentNameRef = useRef(CONTENT_NAME);
+  const TARGET_SAMPLE_RATE = 16000;
 
-  // WebSocket and Audio Helper Functions
+  // Audio Helper Functions
   const arrayBufferToBase64 = (buffer) => {
     const bytes = new Uint8Array(buffer);
     let binary = '';
@@ -279,104 +280,209 @@ export default function QuestionsPage() {
     return result;
   };
 
- const handleBackendEvents = async (data) => {
-  switch (data.type) {
-    case "initialized":
-      // Backend now auto-handles prompt and audio setup after initialization
-      // No need to send deprecated 'promptStart' or 'audioStart'
-      console.log("Session initialized and ready");
-      break;
+  // Play audio with queue management
+  const playBackendAudio = async (base64Audio) => {
+    try {
+      if (!audioContextRef.current) {
+        console.error('AudioContext is null');
+        return;
+      }
+      
+      // Resume audio context if suspended
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      
+      const arrayBuf = base64ToArrayBuffer(base64Audio);
+      
+      // Nova Sonic outputs 24kHz PCM16
+      const audioBuffer = pcmToAudioBuffer(arrayBuf, 24000, 1);
 
-    case "audioReady":
-      // Backend is ready for audio input (if still used)
-      console.log("Backend ready for audio");
-      break;
+      // Add to queue
+      audioQueueRef.current.push(audioBuffer);
+      
+      // Start playing if not already playing
+      if (!isPlayingAudioRef.current) {
+        playNextAudio();
+      }
+    } catch (error) {
+      console.error('Error playing audio:', error);
+    }
+  };
 
-    case "contentStart":
-      setIsAISpeaking(true);
-      setIsSpeaking(true);
-      break;
-
-    case "textOutput":
-      setMessages(prev => [...prev, { type: "ai", text: data.text }]);
-      break;
-
-    case "audioOutput":
-      playBackendAudio(data.audio);
-      break;
-
-    case "contentEnd":
+  const playNextAudio = () => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingAudioRef.current = false;
       setIsAISpeaking(false);
       setIsSpeaking(false);
-      break;
-
-    case "transcription":
-      // Add user message from backend transcription
-      setMessages(prev => [...prev, { type: "user", text: data.text }]);
-      setUserTranscript('');
-      break;
-
-    case "streamComplete":
-      console.log("Stream completed");
-      setIsComplete(true);
-      break;
-
-    case "sessionClosed":
-      console.log("Session closed by backend");
-      setIsComplete(true);
-      break;
-
-    case "error":
-      console.error("Backend error:", data);
-      showAlertMessage(`Backend error: ${data.message || 'Unknown error'}`, 'error');
-      break;
-  }
-};
-
-
-  const playBackendAudio = async (b64) => {
-  const arrayBuf = base64ToArrayBuffer(b64);
-  const audioBuffer = pcmToAudioBuffer(arrayBuf, TARGET_SAMPLE_RATE, 1);
-
-  const src = audioContextRef.current.createBufferSource();
-  src.buffer = audioBuffer;
-  src.connect(audioContextRef.current.destination);
-  src.start(0);
-};
-
- const initializeWebSocket = async () => {
-  const ws = new WebSocket(
-    `${WS_BASE_URL}/?interviewUuid=${id}`
-  );
-
-  ws.onopen = () => {
-    setWsConnected(true);
-    wsRef.current = ws;
-
-    // Send simple initialization message to match backend expectations
-    // Backend will auto-setup prompt, start streaming, and handle audio readiness
-    ws.send(JSON.stringify({ type: "initializeConnection" }));
-  };
-
-  ws.onmessage = (e) => {
-    let data;
-    try {
-      data = JSON.parse(e.data);
-    } catch (err) {
-      console.warn('Non-JSON WS message', err);
       return;
     }
-    handleBackendEvents(data);
+
+    isPlayingAudioRef.current = true;
+    setIsAISpeaking(true);
+    setIsSpeaking(true);
+
+    try {
+      const audioBuffer = audioQueueRef.current.shift();
+      
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      
+      // Create a gain node for volume control
+      const gainNode = audioContextRef.current.createGain();
+      gainNode.gain.value = 1.0; // Full volume
+      
+      source.connect(gainNode);
+      gainNode.connect(audioContextRef.current.destination);
+      
+      source.onended = () => {
+        playNextAudio();
+      };
+      
+      source.start(0);
+    } catch (error) {
+      console.error('Error in playNextAudio:', error);
+      isPlayingAudioRef.current = false;
+      setIsAISpeaking(false);
+      setIsSpeaking(false);
+    }
   };
 
-  ws.onclose = () => setWsConnected(false);
-  ws.onerror = () => setWsConnected(false);
-};
+  const handleBackendEvents = async (data) => {
+    console.log('📥 Backend event received:', data.type);
+    
+    switch (data.type) {
+      case "initialized":
+        console.log('✅ Session initialized');
+        setSessionInitialized(true);
+        break;
 
+      case "audioReady":
+        console.log('✅ Backend confirmed audio stream ready - processor can now send audio');
+        audioStreamReadyRef.current = true;
+        setAudioStreamReady(true);
+        break;
+
+      case "contentStart":
+        if (data.role === 'ASSISTANT') {
+          setIsAISpeaking(true);
+          setIsSpeaking(true);
+        }
+        break;
+
+      case "textOutput":
+        setMessages(prev => {
+          // Check if last message is AI and append to it
+          if (prev.length > 0 && prev[prev.length - 1].type === "ai" && prev[prev.length - 1].isIncomplete) {
+            const updated = [...prev];
+            updated[updated.length - 1].text += data.text;
+            return updated;
+          } else {
+            return [...prev, { type: "ai", text: data.text, isIncomplete: true }];
+          }
+        });
+        break;
+
+      case "audioOutput":
+        if (data.content) {
+          playBackendAudio(data.content);
+        }
+        break;
+
+      case "contentEnd":
+        if (data.role === 'ASSISTANT') {
+          setMessages(prev => {
+            if (prev.length > 0 && prev[prev.length - 1].type === "ai") {
+              const updated = [...prev];
+              updated[updated.length - 1].isIncomplete = false;
+              return updated;
+            }
+            return prev;
+          });
+        }
+        // Don't set isAISpeaking to false yet - audio might still be playing
+        break;
+
+      case "transcription":
+        setMessages(prev => [...prev, { type: "user", text: data.text }]);
+        setUserTranscript('');
+        break;
+
+      case "streamComplete":
+        setIsComplete(true);
+        break;
+
+      case "sessionClosed":
+        setIsComplete(true);
+        break;
+
+      case "audioStopped":
+        audioStreamReadyRef.current = false;
+        setAudioStreamReady(false);
+        break;
+
+      case "error":
+        console.error("Backend error:", data);
+        showAlertMessage(`Backend error: ${data.message || 'Unknown error'}`, 'error');
+        break;
+
+      default:
+        break;
+    }
+  };
+
+  const initializeWebSocket = async () => {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`${WS_BASE_URL}/?interviewUuid=${id}`);
+
+      ws.onopen = () => {
+        setWsConnected(true);
+        wsRef.current = ws;
+
+        // Send initialization message
+        ws.send(JSON.stringify({ type: "initializeConnection" }));
+        
+        resolve(ws);
+      };
+
+      ws.onmessage = (e) => {
+        let data;
+        try {
+          data = JSON.parse(e.data);
+        } catch (err) {
+          console.warn('Non-JSON WS message', err);
+          return;
+        }
+        handleBackendEvents(data);
+      };
+
+      ws.onclose = () => {
+        setWsConnected(false);
+        setSessionInitialized(false);
+        setAudioStreamReady(false);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setWsConnected(false);
+        reject(error);
+      };
+    });
+  };
 
   // Start audio capture for WebSocket
-  const startAudioCapture = (stream) => {
-    if (!audioContextRef.current) return;
+  const startAudioCapture = async (stream) => {
+    if (!audioContextRef.current) {
+      console.error('Cannot start audio capture: AudioContext is null');
+      return;
+    }
+    
+    // Ensure AudioContext is running
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
+    
+    console.log('🎙️ Setting up audio capture processor...');
     
     const source = audioContextRef.current.createMediaStreamSource(stream);
     const processor = audioContextRef.current.createScriptProcessor(2048, 1, 1);
@@ -384,13 +490,25 @@ export default function QuestionsPage() {
     processorRef.current = processor;
 
     processor.onaudioprocess = (e) => {
-      if (!micStateRef.current) return;
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      console.log('🎵 Audio process event fired!'); // Debug log
+      
+      if (!micStateRef.current) {
+        console.log('⏸️ Mic is off, skipping audio');
+        return;
+      }
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        console.log('⚠️ WebSocket not open');
+        return;
+      }
+      if (!audioStreamReadyRef.current) {
+        console.log('⏳ Audio stream not ready yet');
+        return;
+      }
 
       const inputRate = e.inputBuffer.sampleRate;
       const buffer = e.inputBuffer.getChannelData(0);
 
-      // Downsample
+      // Downsample to 16kHz
       const ds = downsampleBuffer(buffer, inputRate, TARGET_SAMPLE_RATE);
       const pcm = new Int16Array(ds.length);
       for (let i = 0; i < ds.length; i++) {
@@ -400,31 +518,23 @@ export default function QuestionsPage() {
 
       const base64 = arrayBufferToBase64(pcm.buffer);
 
-      // Sample debug logging (1% of chunks)
-      if (Math.random() < 0.01) {
-        const first8 = Array.from(new Uint8Array(pcm.buffer).slice(0, 8));
-        console.log('[AUDIO_CHUNK]', {
-          samples: pcm.length,
-          bytes: pcm.byteLength,
-          first8,
-          inputRate,
-          targetRate: TARGET_SAMPLE_RATE
-        });
-      }
+      // Debug: Log audio chunk being sent
+      console.log(`📤 Sending audio chunk: ${base64.length} bytes (base64)`);
 
-      // Send simple audioInput payload to match backend expectations
-      // Backend expects: { type: 'audioInput', audio: base64 }
+      // Send audio input
       wsRef.current.send(JSON.stringify({
         type: 'audioInput',
         audio: base64
       }));
     };
 
-
     source.connect(processor);
+    processor.connect(audioContextRef.current.destination); // CRITICAL: Required for processing to work
+    
+    console.log('✅ Audio processor connected and ready');
   };
 
-  // Initialize speech recognition for WebSocket mode
+  // Initialize speech recognition for display purposes
   const initializeSpeechRecognition = () => {
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) {
@@ -457,23 +567,11 @@ export default function QuestionsPage() {
         }
       }
 
-      // Update user transcript state with final transcript
+      // Update user transcript for display
       if (finalTranscript && finalTranscript !== lastTranscriptRef.current) {
         lastTranscriptRef.current = finalTranscript;
-        setMessages((prev) => {
-          // Check if last message is a user message to update it, or add new one
-          if (prev.length > 0 && prev[prev.length - 1].type === 'user' && prev[prev.length - 1].isIncomplete) {
-            const updated = [...prev];
-            updated[updated.length - 1] = { type: 'user', text: finalTranscript.trim(), isIncomplete: false };
-            return updated;
-          } else {
-            return [...prev, { type: 'user', text: finalTranscript.trim(), isIncomplete: false }];
-          }
-        });
-      }
-
-      // Show interim results
-      if (interimTranscript && !finalTranscript) {
+        setUserTranscript(finalTranscript.trim());
+      } else if (interimTranscript) {
         setUserTranscript(interimTranscript);
       }
     };
@@ -498,24 +596,96 @@ export default function QuestionsPage() {
     micStateRef.current = isMicOn;
   }, [isMicOn]);
 
-  // Handle mic toggle for speech recognition
-  useEffect(() => {
-    if (!speechRecognitionRef.current) return;
+  // Handle mic toggle
+  const toggleMic = async () => {
+    if (!wsConnected || !sessionInitialized) {
+      showAlertMessage('Please wait for session to initialize', 'warning');
+      return;
+    }
+    
+    // Ensure AudioContext is running (user interaction required)
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      console.log('▶️ Resuming AudioContext...');
+      await audioContextRef.current.resume();
+      console.log(`✅ AudioContext state: ${audioContextRef.current.state}`);
+    }
 
-    if (isMicOn) {
+    if (!isMicOn) {
+      // Turning mic ON - start audio stream
       try {
-        speechRecognitionRef.current.start();
-      } catch {
-        console.log('Speech recognition already started');
+        console.log('🎤 Starting audio stream...');
+        console.log(`WebSocket state: ${wsRef.current?.readyState}`);
+        console.log(`Session initialized: ${sessionInitialized}`);
+        
+        // Send audioStart message
+        wsRef.current.send(JSON.stringify({ type: 'audioStart' }));
+        console.log('📤 Sent audioStart message to backend');
+        
+        // Wait for backend confirmation - poll for audioStreamReady using ref
+        console.log('⏳ Waiting for backend audioReady event...');
+        let attempts = 0;
+        const maxAttempts = 30; // 3 seconds max
+        
+        while (!audioStreamReadyRef.current && attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
+        
+        if (!audioStreamReadyRef.current) {
+          console.warn('⚠️ audioReady not received after 3s, but proceeding anyway');
+        } else {
+          console.log(`✅ Audio stream ready confirmed after ${attempts * 100}ms`);
+        }
+        
+        // Enable microphone
+        setIsMicOn(true);
+        console.log('✅ Microphone enabled - audio processor should now start sending');
+        
+        // Start speech recognition for display
+        if (speechRecognitionRef.current) {
+          try {
+            speechRecognitionRef.current.start();
+            console.log('🎙️ Speech recognition started');
+          } catch (e) {
+            console.log('Speech recognition already running or error:', e.message);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error starting audio:', error);
+        showAlertMessage('Failed to start audio stream', 'error');
       }
     } else {
+      // Turning mic OFF - stop audio stream
       try {
-        speechRecognitionRef.current.stop();
-      } catch {
-        console.log('Speech recognition already stopped');
+        console.log('🛑 Stopping audio stream...');
+        
+        // Disable microphone first
+        setIsMicOn(false);
+        console.log('⏸️ Microphone disabled');
+        
+        // Stop speech recognition
+        if (speechRecognitionRef.current) {
+          try {
+            speechRecognitionRef.current.stop();
+            console.log('🎙️ Speech recognition stopped');
+          } catch {
+            // Already stopped
+          }
+        }
+        
+        // Send stopAudio message
+        wsRef.current.send(JSON.stringify({ type: 'stopAudio' }));
+        console.log('📤 Sent stopAudio message to backend');
+        
+        audioStreamReadyRef.current = false;
+        setAudioStreamReady(false);
+        console.log('✅ Audio stopped');
+      } catch (error) {
+        console.error('❌ Error stopping audio:', error);
+        showAlertMessage('Failed to stop audio stream', 'error');
       }
     }
-  }, [isMicOn]);
+  };
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
@@ -526,24 +696,18 @@ export default function QuestionsPage() {
 
   // Handle timer expiry
   const handleTimerExpiry = useCallback(() => {
-    console.log('Timer expired - stopping interview');
-    
-    // Stop timer
     setIsTimerActive(false);
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
     
-    // Stop WebSocket microphone
     setIsMicOn(false);
     
-    // Stop recording
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
     
-    // Stop camera
     if (videoStream) {
       videoStream.getTracks().forEach((track) => track.stop());
     }
@@ -555,18 +719,15 @@ export default function QuestionsPage() {
     setIsCameraActive(false);
     setIsRecordingVideo(false);
     
-    // Stop TTS
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     setIsSpeaking(false);
     setIsAISpeaking(false);
     
-    // End WebSocket session if connected
     if (wsConnected && wsRef.current?.readyState === WebSocket.OPEN) {
       endInterviewWebSocket();
     } else {
-      // Mark as complete for traditional mode
       setIsComplete(true);
       showAlertMessage('Time expired! Interview completed.', 'warning');
     }
@@ -578,7 +739,6 @@ export default function QuestionsPage() {
       timerIntervalRef.current = setInterval(() => {
         setTimeRemaining((prev) => {
           if (prev <= 1) {
-            // Timer expired
             handleTimerExpiry();
             return 0;
           }
@@ -620,7 +780,7 @@ export default function QuestionsPage() {
         // Start continuous video recording
         startContinuousRecording(stream);
         
-        // Initialize audio context for visualization and WebSocket
+        // Initialize audio context
         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: TARGET_SAMPLE_RATE,
           latencyHint: 'interactive',
@@ -636,18 +796,13 @@ export default function QuestionsPage() {
         // Initialize WebSocket connection
         await initializeWebSocket();
         
-        // Initialize speech recognition for WebSocket mode
+        // Initialize speech recognition
         initializeSpeechRecognition();
         
-        // Start audio capture for WebSocket
+        // Start audio capture
         startAudioCapture(stream);
-        
-        // Enable microphone by default
-        setIsMicOn(true);
-        
-        console.log('Camera, WebSocket, and recording initialized successfully');
       } catch (err) {
-        console.error('Camera/WebSocket initialization error:', err);
+        console.error('Initialization error:', err);
         showAlertMessage(
           'Could not access camera/microphone or connect to AI service. Please allow permissions.',
           'error'
@@ -658,7 +813,6 @@ export default function QuestionsPage() {
     initializeMediaDevices();
 
     return () => {
-      // Cleanup
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
       }
@@ -707,13 +861,6 @@ export default function QuestionsPage() {
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const videoBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        console.log('Recording segment completed. Size:', videoBlob.size);
-        
-        // For continuous interview, we don't need question-specific data
-        // The conversation is handled by WebSocket
-
-        // Restart recording if not complete and timer not expired
         if (!isComplete && videoStream && timeRemaining > 0) {
           audioChunksRef.current = [];
           mediaRecorderRef.current.start(1000);
@@ -722,7 +869,6 @@ export default function QuestionsPage() {
 
       mediaRecorderRef.current.start(1000);
       setIsRecordingVideo(true);
-      console.log('Continuous recording started');
     } catch (err) {
       console.error('Recording start error:', err);
       showAlertMessage('Could not start recording', 'error');
@@ -732,7 +878,6 @@ export default function QuestionsPage() {
   // Initialize audio visualization
   const initializeAudioVisualization = (stream) => {
     try {
-      // Reuse existing audioContext to maintain sample rate consistency
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: TARGET_SAMPLE_RATE,
@@ -759,15 +904,14 @@ export default function QuestionsPage() {
       requestAnimationFrame(draw);
       analyserRef.current.getByteFrequencyData(dataArray);
 
-      // Generate waveform bars (20 bars)
       const bars = [];
       const step = Math.floor(dataArray.length / 20);
       for (let i = 0; i < 20; i++) {
         const value = dataArray[i * step] || 0;
-        bars.push(Math.max(5, (value / 255) * 60)); // Scale to 60px max height
+        bars.push(Math.max(5, (value / 255) * 60));
       }
 
-      if (isSpeaking) {
+      if (isSpeaking || isAISpeaking) {
         setAiWaveform(bars);
       } else if (isMicOn) {
         setUserWaveform(bars);
@@ -777,10 +921,8 @@ export default function QuestionsPage() {
     draw();
   };
 
-  // Fetch questions from API
+  // Check if interview link is valid
   useEffect(() => {
-    // For WebSocket-based interviews, we don't need to fetch questions
-    // The backend handles the conversation flow
     if (id) {
       setIsLoading(false);
     } else {
@@ -789,14 +931,12 @@ export default function QuestionsPage() {
     }
   }, [id]);
 
-  // Auto-start interview when WebSocket is connected
+  // Auto-start interview when ready
   useEffect(() => {
-    if (!isLoading && isCameraActive && wsConnected) {
-      // Start timer
+    if (!isLoading && isCameraActive && wsConnected && sessionInitialized) {
       setIsTimerActive(true);
-      // WebSocket will handle the conversation automatically
     }
-  }, [isLoading, isCameraActive, wsConnected]);
+  }, [isLoading, isCameraActive, wsConnected, sessionInitialized]);
 
   // Check browser support
   useEffect(() => {
@@ -825,13 +965,10 @@ export default function QuestionsPage() {
 
   const endInterviewWebSocket = () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      // Send simple stopAudio payload to match backend expectations
-      // Drop the raw Bedrock contentEnd event
-      wsRef.current.send(JSON.stringify({ type: 'stopAudio' }));
+      wsRef.current.send(JSON.stringify({ type: 'endSession' }));
     }
     setIsComplete(true);
   };
-
 
   const showAlertMessage = (message, severity = 'warning') => {
     setAlertMessage(message);
@@ -938,10 +1075,10 @@ export default function QuestionsPage() {
           {/* AI Section - Left Half */}
           <Box sx={{ ...styles.aiSection, ...(isSpeaking && styles.pulsingGlow) }}>
             <Chip
-              label={wsConnected ? "● AI INTERVIEWER (WebSocket)" : "● AI INTERVIEWER"}
+              label={wsConnected ? "● CONNECTED" : "● CONNECTING..."}
               sx={{
                 ...styles.statusChip,
-                backgroundColor: wsConnected ? '#667eea' : '#4a7c59',
+                backgroundColor: wsConnected ? '#4a7c59' : '#d32f2f',
                 color: '#ffffff',
                 fontWeight: 'bold',
               }}
@@ -968,7 +1105,7 @@ export default function QuestionsPage() {
                 fontWeight: 400,
               }}
             >
-              AI Interview in Progress
+              {sessionInitialized ? 'Interview Active' : 'Initializing...'}
             </Typography>
 
             {/* AI Avatar/Icon */}
@@ -1014,7 +1151,7 @@ export default function QuestionsPage() {
                 ))}
                 {messages.length === 0 && (
                   <Typography variant="body2" sx={{ color: '#6b9475', fontStyle: 'italic' }}>
-                    Waiting for AI to start the interview...
+                    {sessionInitialized ? 'Waiting for AI to start...' : 'Initializing session...'}
                   </Typography>
                 )}
               </Box>
@@ -1022,7 +1159,7 @@ export default function QuestionsPage() {
                 <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <VolumeUp sx={{ fontSize: 16, color: '#4a7c59' }} />
                   <Typography variant="caption" sx={{ color: '#4a7c59' }}>
-                    {isAISpeaking ? 'AI Speaking...' : 'Ready to listen'}
+                    {isAISpeaking ? 'AI Speaking...' : 'Ready'}
                   </Typography>
                 </Box>
               )}
@@ -1045,15 +1182,12 @@ export default function QuestionsPage() {
           </Box>
 
           {/* User Section - Right Half */}
-          <Box sx={{ ...styles.userSection, ...(listening && styles.pulsingGlow) }}>
+          <Box sx={{ ...styles.userSection, ...(isMicOn && styles.pulsingGlow) }}>
             <Chip
-              label={wsConnected 
-                ? (isMicOn ? '● LISTENING (WebSocket)' : '● MICROPHONE OFF') 
-                : (listening ? '● LISTENING' : '● STANDBY')
-              }
+              label={isMicOn ? '● SPEAKING' : '● STANDBY'}
               sx={{
                 ...styles.statusChip,
-                backgroundColor: (wsConnected ? isMicOn : listening) ? '#d32f2f' : '#4a7c59',
+                backgroundColor: isMicOn ? '#d32f2f' : '#4a7c59',
                 color: '#ffffff',
                 fontWeight: 'bold',
               }}
@@ -1141,64 +1275,49 @@ export default function QuestionsPage() {
                 Your Response:
               </Typography>
               <Typography variant="body1" sx={{ color: '#2d5a3d', lineHeight: 1.8 }}>
-                {wsConnected ? (
-                  // Show current user input
-                  <>
-                    {userTranscript && (
-                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
-                        {userTranscript}
-                      </span>
-                    )}
-                    {!userTranscript && (
-                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
-                        {isMicOn ? 'Listening... Speak your response' : 'Turn on microphone to speak'}
-                      </span>
-                    )}
-                  </>
+                {userTranscript ? (
+                  <span style={{ color: '#2d5a3d' }}>{userTranscript}</span>
                 ) : (
-                  // Fallback for non-WebSocket mode
-                  <>
-                    {finalTranscript}
-                    {interimTranscript && (
-                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
-                        {interimTranscript}
-                      </span>
-                    )}
-                    {!finalTranscript && !interimTranscript && (
-                      <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
-                        Start speaking your answer...
-                      </span>
-                    )}
-                  </>
+                  <span style={{ color: '#6b9475', fontStyle: 'italic' }}>
+                    {isMicOn 
+                      ? 'Listening... Speak your response' 
+                      : sessionInitialized 
+                        ? 'Click "Start Speaking" to respond'
+                        : 'Waiting for session to initialize...'}
+                  </span>
                 )}
               </Typography>
               
-              {/* WebSocket microphone control */}
-              {wsConnected && (
-                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Button
-                    variant="contained"
-                    size="small"
-                    onClick={() => setIsMicOn(!isMicOn)}
-                    startIcon={isMicOn ? <Mic /> : <MicOff />}
-                    sx={{
-                      backgroundColor: isMicOn ? '#4a7c59' : '#d32f2f',
-                      '&:hover': {
-                        backgroundColor: isMicOn ? '#2d5a3d' : '#b71c1c',
-                      },
-                    }}
-                  >
-                    {isMicOn ? 'Mute' : 'Unmute'}
-                  </Button>
+              {/* Microphone control */}
+              <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Button
+                  variant="contained"
+                  size="medium"
+                  onClick={toggleMic}
+                  startIcon={isMicOn ? <Mic /> : <MicOff />}
+                  disabled={!sessionInitialized}
+                  sx={{
+                    backgroundColor: isMicOn ? '#d32f2f' : '#4a7c59',
+                    '&:hover': {
+                      backgroundColor: isMicOn ? '#b71c1c' : '#2d5a3d',
+                    },
+                    '&:disabled': {
+                      backgroundColor: '#cccccc',
+                    },
+                  }}
+                >
+                  {isMicOn ? 'Stop Speaking' : 'Start Speaking'}
+                </Button>
+                {isListening && (
                   <Typography variant="caption" sx={{ color: '#4a7c59' }}>
-                    {isListening ? 'Speech recognition active' : 'Waiting for speech'}
+                    Recording...
                   </Typography>
-                </Box>
-              )}
+                )}
+              </Box>
             </Box>
 
             {/* User Waveform Visualization */}
-            {(listening || (wsConnected && isMicOn)) && (
+            {isMicOn && (
               <Box sx={styles.waveformContainer}>
                 {userWaveform.map((height, index) => (
                   <Box
@@ -1216,32 +1335,43 @@ export default function QuestionsPage() {
             {/* Interview Status */}
             <Box sx={{ width: '100%', maxWidth: '500px', mt: 3, textAlign: 'center' }}>
               <Typography variant="body2" sx={{ color: '#4a7c59' }}>
-                Interview in progress - {formatTime(timeRemaining)} remaining
+                {sessionInitialized 
+                  ? `Interview in progress - ${formatTime(timeRemaining)} remaining`
+                  : 'Initializing interview session...'}
               </Typography>
             </Box>
 
-            {/* WebSocket Controls */}
-            {wsConnected && (
-              <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
-                <Button
-                  variant="outlined"
-                  color="error"
-                  size="small"
-                  onClick={endInterviewWebSocket}
-                  sx={{ borderRadius: '20px' }}
-                >
-                  End Interview
-                </Button>
+            {/* Controls */}
+            <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                onClick={endInterviewWebSocket}
+                disabled={!wsConnected}
+                sx={{ borderRadius: '20px' }}
+              >
+                End Interview
+              </Button>
+              <Typography variant="caption" sx={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                color: wsConnected ? '#4a7c59' : '#d32f2f',
+                gap: 0.5
+              }}>
+                {wsConnected ? '🟢' : '🔴'} {wsConnected ? 'Connected' : 'Disconnected'}
+              </Typography>
+              {sessionInitialized && (
                 <Typography variant="caption" sx={{ 
                   display: 'flex', 
                   alignItems: 'center', 
-                  color: wsConnected ? '#4a7c59' : '#d32f2f',
+                  color: '#4a7c59',
                   gap: 0.5
                 }}>
-                  {wsConnected ? '🟢' : '🔴'} WebSocket {wsConnected ? 'Connected' : 'Disconnected'}
+                  ✓ Session Ready
                 </Typography>
-              </Box>
-            )}
+              )}
+            </Box>
           </Box>
         </Box>
       </Box>
