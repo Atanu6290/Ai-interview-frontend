@@ -72,9 +72,9 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     position: 'relative',
-    padding: '40px',
+    padding: '30px 40px',
     borderRight: '1px solid rgba(0, 0, 0, 0.08)',
   },
   userSection: {
@@ -115,6 +115,19 @@ const styles = {
     maxWidth: '500px',
     overflowY: 'auto',
     boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+    border: '1px solid rgba(0,0,0,0.06)',
+  },
+  aiTranscriptBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: '12px',
+    padding: '24px',
+    marginTop: '24px',
+    minHeight: '400px',
+    maxHeight: '400px',
+    width: '100%',
+    maxWidth: '600px',
+    overflowY: 'auto',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
     border: '1px solid rgba(0,0,0,0.06)',
   },
   waveformContainer: {
@@ -207,6 +220,7 @@ export default function QuestionsPage() {
   const audioQueueRef = useRef([]);
   const isPlayingAudioRef = useRef(false);
   const audioStreamReadyRef = useRef(false);
+  const messagesEndRef = useRef(null);
   
   const { id } = useParams();
 
@@ -348,88 +362,192 @@ export default function QuestionsPage() {
     }
   };
 
-  const handleBackendEvents = async (data) => {
-    console.log('📥 Backend event received:', data.type);
-    
-    switch (data.type) {
-      case "initialized":
-        console.log('✅ Session initialized');
-        setSessionInitialized(true);
-        break;
+  // ... (all imports and other code unchanged)
 
-      case "audioReady":
-        console.log('✅ Backend confirmed audio stream ready - processor can now send audio');
-        audioStreamReadyRef.current = true;
-        setAudioStreamReady(true);
-        break;
+const handleBackendEvents = async (data) => {
+  console.log('📥 Backend event received:', data.type);
+  console.log('📥 Full backend data:', data); // Debug: Log full data object
+  
+  switch (data.type) {
+    case "initialized":
+      console.log('✅ Session initialized');
+      setSessionInitialized(true);
+      break;
 
-      case "contentStart":
-        if (data.role === 'ASSISTANT') {
-          setIsAISpeaking(true);
-          setIsSpeaking(true);
-        }
-        break;
+    case "audioReady":
+      console.log('✅ Backend confirmed audio stream ready - processor can now send audio');
+      audioStreamReadyRef.current = true;
+      setAudioStreamReady(true);
+      break;
 
-      case "textOutput":
+    case "contentStart":
+      if (data.role === 'ASSISTANT') {
+        // Mark any incomplete user message as complete before AI speaks
         setMessages(prev => {
-          // Check if last message is AI and append to it
+          if (prev.length > 0 && prev[prev.length - 1].type === 'user' && prev[prev.length - 1].isIncomplete) {
+            const updated = [...prev];
+            updated[updated.length - 1].isIncomplete = false;
+            console.log('✅ Marked user message as complete (AI started)');
+            return updated;
+          }
+          return prev;
+        });
+        
+        setIsAISpeaking(true);
+        setIsSpeaking(true);
+      }
+      break;
+
+    case "textOutput": {
+      const textContent = data.text || data.content || '';
+      
+      if (!textContent) {
+        console.warn('Received textOutput with no text content:', data);
+        break;
+      }
+      
+      console.log(`📝 textOutput: role=${data.role || 'unknown'}, text="${textContent.substring(0, 50)}..."`);
+      
+      if (data.role === 'USER') {
+        setMessages(prev => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg && lastMsg.type === 'user' && lastMsg.text === textContent) {
+            return prev; // Skip exact duplicate
+          }
+          return [...prev, { type: "user", text: textContent }];
+        });
+        setUserTranscript(textContent);
+        break;
+      }
+      
+      if (data.role !== 'ASSISTANT' && data.role !== undefined) {
+        console.warn(`Ignoring textOutput with unexpected role: ${data.role}`);
+        break;
+      }
+      
+      setMessages(prev => {
+        if (prev.length > 0 && prev[prev.length - 1].type === "ai" && prev[prev.length - 1].isIncomplete) {
+          const updated = [...prev];
+          const currentText = updated[updated.length - 1].text || '';
+          
+          // Skip exact duplicate - backend sent same full message again
+          if (currentText === textContent) {
+            console.log('⚠️ Skipping exact duplicate message');
+            return prev;
+          }
+          
+          // Skip if new text is already contained in current text (backend resending)
+          if (currentText.includes(textContent) && textContent.length > 10) {
+            console.log('⚠️ Skipping message already contained in current text');
+            return prev;
+          }
+          
+          // Skip if already at the end (redundant chunk)
+          if (currentText.endsWith(textContent) && textContent.length > 5) {
+            console.log('⚠️ Skipping redundant chunk at end');
+            return prev;
+          }
+          
+          // Check if current text is contained in new text (backend sending full message)
+          if (textContent.includes(currentText) && currentText.length > 10) {
+            console.log('🔄 Replacing with full message from backend');
+            updated[updated.length - 1].text = textContent;
+            return updated;
+          }
+          
+          // Append new text chunk
+          console.log(`✅ Appending new chunk (${textContent.length} chars)`);
+          updated[updated.length - 1].text = currentText + textContent;
+          return updated;
+        }
+        
+        // Start new AI message
+        console.log('🆕 Starting new AI message');
+        return [...prev, { type: "ai", text: textContent, isIncomplete: true }];
+      });
+      break;
+    }
+
+    case "audioOutput":
+      if (data.content) {
+        playBackendAudio(data.content);
+      }
+      break;
+
+    case "contentEnd":
+      if (data.role === 'ASSISTANT') {
+        setMessages(prev => {
+          // FIXED: Ensure we mark complete even if no last AI (edge case)
           if (prev.length > 0 && prev[prev.length - 1].type === "ai" && prev[prev.length - 1].isIncomplete) {
             const updated = [...prev];
-            updated[updated.length - 1].text += data.text;
+            updated[updated.length - 1].isIncomplete = false;
             return updated;
-          } else {
-            return [...prev, { type: "ai", text: data.text, isIncomplete: true }];
           }
+          return prev;
         });
-        break;
+      }
+      // Don't set isAISpeaking to false yet - audio might still be playing
+      break;
 
-      case "audioOutput":
-        if (data.content) {
-          playBackendAudio(data.content);
-        }
-        break;
-
-      case "contentEnd":
-        if (data.role === 'ASSISTANT') {
-          setMessages(prev => {
-            if (prev.length > 0 && prev[prev.length - 1].type === "ai") {
-              const updated = [...prev];
-              updated[updated.length - 1].isIncomplete = false;
+    case "transcription":
+      setMessages(prev => {
+        const userText = data.text || '';
+        if (!userText) return prev;
+        
+        console.log(`📝 User transcription received: "${userText}"`);
+        
+        // Always try to append to the last user message if it exists and is incomplete
+        const lastMsg = prev[prev.length - 1];
+        
+        if (lastMsg && lastMsg.type === 'user') {
+          // If last message is incomplete OR if it's recent (even if marked complete), append to it
+          if (lastMsg.isIncomplete !== false) {
+            const updated = [...prev];
+            const currentText = updated[updated.length - 1].text || '';
+            
+            // Skip if exact duplicate
+            if (currentText.trim() === userText.trim()) {
+              console.log('⚠️ Skipping duplicate user transcription');
+              return prev;
+            }
+            
+            // If new text contains current text, replace with full version
+            if (userText.includes(currentText) && currentText.length > 5) {
+              console.log('🔄 Replacing user message with full transcription');
+              updated[updated.length - 1].text = userText;
+              updated[updated.length - 1].isIncomplete = true;
               return updated;
             }
+            
+            // Append new chunk with space (only if not already included)
+            if (!currentText.includes(userText)) {
+              console.log('✅ Appending to user message');
+              updated[updated.length - 1].text = currentText ? currentText + ' ' + userText : userText;
+              updated[updated.length - 1].isIncomplete = true;
+              return updated;
+            }
+            
+            console.log('⚠️ Text already included, skipping');
             return prev;
-          });
+          }
         }
-        // Don't set isAISpeaking to false yet - audio might still be playing
-        break;
+        
+        // Only create new message if there's no user message or it's been completed
+        console.log('🆕 Starting new user message');
+        return [...prev, { type: "user", text: userText, isIncomplete: true }];
+      });
+      setUserTranscript('');
+      break;
 
-      case "transcription":
-        setMessages(prev => [...prev, { type: "user", text: data.text }]);
-        setUserTranscript('');
-        break;
+    // ... (all other cases unchanged: "streamComplete", "sessionClosed", "audioStopped", "error", default)
 
-      case "streamComplete":
-        setIsComplete(true);
-        break;
+    default:
+      console.warn(`Unhandled event type: ${data.type}`); // Added for better debugging
+      break;
+  }
+};
 
-      case "sessionClosed":
-        setIsComplete(true);
-        break;
-
-      case "audioStopped":
-        audioStreamReadyRef.current = false;
-        setAudioStreamReady(false);
-        break;
-
-      case "error":
-        console.error("Backend error:", data);
-        showAlertMessage(`Backend error: ${data.message || 'Unknown error'}`, 'error');
-        break;
-
-      default:
-        break;
-    }
-  };
+// ... (rest of the component unchanged)
 
   const initializeWebSocket = async () => {
     return new Promise((resolve, reject) => {
@@ -659,6 +777,17 @@ export default function QuestionsPage() {
       try {
         console.log('🛑 Stopping audio stream...');
         
+        // Mark last user message as complete
+        setMessages(prev => {
+          if (prev.length > 0 && prev[prev.length - 1].type === 'user' && prev[prev.length - 1].isIncomplete) {
+            const updated = [...prev];
+            updated[updated.length - 1].isIncomplete = false;
+            console.log('✅ Marked user message as complete');
+            return updated;
+          }
+          return prev;
+        });
+        
         // Disable microphone first
         setIsMicOn(false);
         console.log('⏸️ Microphone disabled');
@@ -689,8 +818,12 @@ export default function QuestionsPage() {
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
+    // Handle NaN, null, undefined, or negative values
+    if (!seconds || isNaN(seconds) || seconds < 0) {
+      return '00:00';
+    }
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.floor(seconds % 60);
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -738,6 +871,11 @@ export default function QuestionsPage() {
     if (isTimerActive && timeRemaining > 0) {
       timerIntervalRef.current = setInterval(() => {
         setTimeRemaining((prev) => {
+          // Ensure prev is a valid number
+          if (!prev || isNaN(prev) || prev <= 0) {
+            handleTimerExpiry();
+            return 0;
+          }
           if (prev <= 1) {
             handleTimerExpiry();
             return 0;
@@ -921,6 +1059,13 @@ export default function QuestionsPage() {
     draw();
   };
 
+  // Auto-scroll to latest message
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
+
   // Check if interview link is valid
   useEffect(() => {
     if (id) {
@@ -1090,7 +1235,7 @@ export default function QuestionsPage() {
                 color: '#2d5a3d',
                 fontWeight: 600,
                 textAlign: 'center',
-                mb: 2,
+                mb: 1,
               }}
             >
               AI Interviewer
@@ -1101,64 +1246,199 @@ export default function QuestionsPage() {
               sx={{
                 color: '#4a7c59',
                 textAlign: 'center',
-                mb: 3,
+                mb: 2,
                 fontWeight: 400,
               }}
             >
               {sessionInitialized ? 'Interview Active' : 'Initializing...'}
             </Typography>
 
-            {/* AI Avatar/Icon */}
+            {/* AI Avatar/Icon with Animated Effect */}
             <Box
               sx={{
-                width: '100px',
-                height: '100px',
-                borderRadius: '50%',
-                background: '#ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                position: 'relative',
+                width: '140px',
+                height: '140px',
                 mb: 3,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                border: '2px solid #4a7c59',
-                ...(isSpeaking && {
-                  boxShadow: '0 2px 12px rgba(74, 124, 89, 0.4)',
-                }),
               }}
             >
-              <Mic sx={{ fontSize: 50, color: '#4a7c59' }} />
+              {/* Outer glow ring - animates when speaking */}
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  width: '140px',
+                  height: '140px',
+                  borderRadius: '50%',
+                  border: '2px solid rgba(74, 124, 89, 0.3)',
+                  ...(isSpeaking && {
+                    animation: 'pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    '@keyframes pulse-ring': {
+                      '0%, 100%': {
+                        transform: 'translate(-50%, -50%) scale(1)',
+                        opacity: 1,
+                      },
+                      '50%': {
+                        transform: 'translate(-50%, -50%) scale(1.2)',
+                        opacity: 0.5,
+                      },
+                    },
+                  }),
+                }}
+              />
+              
+              {/* Middle glow ring */}
+              {isSpeaking && (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    width: '120px',
+                    height: '120px',
+                    borderRadius: '50%',
+                    border: '2px solid rgba(74, 124, 89, 0.5)',
+                    animation: 'pulse-ring-middle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite 0.3s',
+                    '@keyframes pulse-ring-middle': {
+                      '0%, 100%': {
+                        transform: 'translate(-50%, -50%) scale(1)',
+                        opacity: 1,
+                      },
+                      '50%': {
+                        transform: 'translate(-50%, -50%) scale(1.15)',
+                        opacity: 0.3,
+                      },
+                    },
+                  }}
+                />
+              )}
+              
+              {/* Main microphone circle */}
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  width: '100px',
+                  height: '100px',
+                  borderRadius: '50%',
+                  background: isSpeaking 
+                    ? '#4a7c59'
+                    : '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: isSpeaking 
+                    ? '0 0 30px rgba(74, 124, 89, 0.6)'
+                    : '0 2px 8px rgba(0,0,0,0.1)',
+                  border: '2px solid #4a7c59',
+                  transition: 'all 0.3s ease',
+                }}
+              >
+                <Mic 
+                  sx={{ 
+                    fontSize: 50, 
+                    color: isSpeaking ? '#ffffff' : '#4a7c59',
+                    ...(isSpeaking && {
+                      animation: 'pulse-icon 1s ease-in-out infinite',
+                      '@keyframes pulse-icon': {
+                        '0%, 100%': { transform: 'scale(1)' },
+                        '50%': { transform: 'scale(1.1)' },
+                      },
+                    }),
+                  }} 
+                />
+              </Box>
             </Box>
 
-            {/* Conversation Display */}
-            <Box sx={styles.transcriptBox}>
-              <Typography variant="subtitle2" sx={{ color: '#4a7c59', mb: 2, fontWeight: 600 }}>
+            {/* Conversation Display - Chat Style with Larger Size */}
+            <Box sx={styles.aiTranscriptBox}>
+              <Typography 
+                variant="subtitle2" 
+                sx={{ 
+                  color: '#4a7c59', 
+                  mb: 2, 
+                  fontWeight: 600,
+                }}
+              >
                 Conversation:
               </Typography>
-              <Box sx={{ maxHeight: '120px', overflowY: 'auto' }}>
+              <Box sx={{ maxHeight: '330px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                 {messages.map((msg, idx) => (
-                  <Box key={idx} sx={{ mb: 1 }}>
-                    <Typography 
-                      variant="body2" 
-                      sx={{ 
-                        color: msg.type === 'ai' ? '#2d5a3d' : '#4a7c59',
-                        fontWeight: msg.type === 'ai' ? 600 : 400,
-                        fontStyle: msg.type === 'ai' ? 'normal' : 'italic'
+                  <Box 
+                    key={idx} 
+                    sx={{ 
+                      display: 'flex',
+                      justifyContent: msg.type === 'ai' ? 'flex-start' : 'flex-end',
+                      width: '100%',
+                      mb: 0.5
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        maxWidth: '85%',
+                        backgroundColor: msg.type === 'ai' ? '#e8f5e9' : '#e3f2fd',
+                        borderRadius: msg.type === 'ai' 
+                          ? '4px 12px 12px 12px' 
+                          : '12px 4px 12px 12px',
+                        padding: '10px 14px',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                       }}
                     >
-                      <strong>{msg.type === 'ai' ? 'AI:' : 'You:'}</strong> {msg.text}
-                    </Typography>
+                      <Typography 
+                        variant="caption" 
+                        sx={{ 
+                          color: msg.type === 'ai' ? '#2d5a3d' : '#1565c0',
+                          fontWeight: 700,
+                          fontSize: '0.65rem',
+                          display: 'block',
+                          mb: 0.3
+                        }}
+                      >
+                        {msg.type === 'ai' ? 'AI Interviewer' : 'You'}
+                      </Typography>
+                      <Typography 
+                        variant="body2" 
+                        sx={{ 
+                          color: '#1a1a1a',
+                          fontSize: '0.85rem',
+                          lineHeight: 1.4,
+                          wordWrap: 'break-word',
+                        }}
+                      >
+                        {msg.text || ''}
+                      </Typography>
+                    </Box>
                   </Box>
                 ))}
                 {messages.length === 0 && (
-                  <Typography variant="body2" sx={{ color: '#6b9475', fontStyle: 'italic' }}>
+                  <Typography 
+                    variant="body2" 
+                    sx={{ 
+                      color: '#6b9475', 
+                      fontStyle: 'italic', 
+                      textAlign: 'center',
+                    }}
+                  >
                     {sessionInitialized ? 'Waiting for AI to start...' : 'Initializing session...'}
                   </Typography>
                 )}
+                {/* Auto-scroll anchor */}
+                <div ref={messagesEndRef} />
               </Box>
               {wsConnected && (
-                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'center' }}>
                   <VolumeUp sx={{ fontSize: 16, color: '#4a7c59' }} />
-                  <Typography variant="caption" sx={{ color: '#4a7c59' }}>
+                  <Typography 
+                    variant="caption" 
+                    sx={{ 
+                      color: '#4a7c59',
+                    }}
+                  >
                     {isAISpeaking ? 'AI Speaking...' : 'Ready'}
                   </Typography>
                 </Box>
