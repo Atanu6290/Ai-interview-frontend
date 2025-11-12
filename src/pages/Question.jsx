@@ -1634,7 +1634,7 @@ export default function QuestionsPage() {
               >
                 Conversation:
               </Typography>
-              <Box sx={{ maxHeight: '350px', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Box sx={{ maxHeight: '350px', display: 'flex', flexDirection: 'column', gap: 1.5, paddingTop:"2px", paddingBottom:"2px"}}>
                 {messages.map((msg, idx) => (
                   <Box
                     key={idx}
